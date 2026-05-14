@@ -9,11 +9,12 @@ import { Viewport3D } from './components/Viewport3D.jsx';
 import { LogPanel } from './components/LogPanel.jsx';
 
 import { serialiseTilemap } from '../shared/types.mjs';
-import { getTilemap, useStore, getView } from './state/store.js';
+import { getTilemap, useStore, getView, loadTilemap } from './state/store.js';
 
 export function App() {
   const [log, setLog] = useState([]);
   const [compiling, setCompiling] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [lastBspPath, setLastBspPath] = useState(null);
   const [defaults, setDefaults] = useState(null);
   const [currentTool, setCurrentTool] = useState(null);
@@ -61,6 +62,38 @@ export function App() {
   useEffect(() => {
     window.modeditor?.defaults?.().then(setDefaults).catch(() => {});
   }, []);
+
+  // Restore the last-saved tilemap on startup. Silent if there's no
+  // saved file yet — the default empty ocean is already in the store.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await window.modeditor?.tilemap?.loadLast?.({ basename: 'uplifter' });
+        if (cancelled || !r?.ok) return;
+        loadTilemap(r.tilemap);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const onSave = useCallback(async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const snap = serialiseTilemap(getTilemap());
+      const r = await window.modeditor.tilemap.save({ tilemap: snap, basename: 'uplifter' });
+      if (r.ok) {
+        toast(`Guardado → ${r.path}`, 'success', 4000);
+      } else {
+        toast(`Guardado falló: ${r.error}`, 'danger', 4000);
+      }
+    } catch (err) {
+      toast(`Error: ${err.message}`, 'danger', 4000);
+    } finally {
+      setSaving(false);
+    }
+  }, [saving, toast]);
 
   const onCompile = useCallback(async () => {
     if (compiling) return;
@@ -121,9 +154,11 @@ export function App() {
       <OverlayToaster ref={toasterRef} position={Position.TOP} />
       <div className="app-toolbar">
         <Toolbar
+          onSave={onSave}
           onCompile={onCompile}
           onLaunch={onLaunch}
           compiling={compiling}
+          saving={saving}
           canLaunch={!!lastBspPath}
         />
       </div>

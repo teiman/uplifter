@@ -57,6 +57,34 @@ function registerIpc(getWindow) {
 
   ipcMain.handle('wad:listDefault', async () => listWads());
 
+  ipcMain.handle('tilemap:save', async (_evt, { tilemap, basename = 'uplifter' } = {}) => {
+    try {
+      const target = path.join(TMP_DIR, `${basename}.tmap.json`);
+      // tilemap is already a serialised (plain) snapshot from the renderer.
+      await fs.writeFile(target, JSON.stringify(tilemap, null, 2), 'utf8');
+      const stat = await fs.stat(target);
+      return { ok: true, path: target, bytes: stat.size };
+    } catch (err) {
+      console.error('[tilemap:save]', err);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  /** Load the last-saved tilemap, if one exists. Used by the renderer on
+   *  startup to restore the previous session. Returns { ok:true, tilemap }
+   *  when found, { ok:false, missing:true } when there's no file yet. */
+  ipcMain.handle('tilemap:loadLast', async (_evt, { basename = 'uplifter' } = {}) => {
+    try {
+      const source = path.join(TMP_DIR, `${basename}.tmap.json`);
+      const text = await fs.readFile(source, 'utf8').catch(() => null);
+      if (text == null) return { ok: false, missing: true };
+      return { ok: true, tilemap: JSON.parse(text), path: source };
+    } catch (err) {
+      console.error('[tilemap:loadLast]', err);
+      return { ok: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('tilemap:exportMap', async (_evt, { tilemap, basename = 'untitled' } = {}) => {
     try {
       const t = deserialiseTilemap(tilemap);

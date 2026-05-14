@@ -118,6 +118,35 @@ export function isWaterCell(tilemap, idx) {
   return tilemap.heights[idx] < SEA_LEVEL_H;
 }
 
+/** Reconstruct a TilemapData from a serialised plain object (typed
+ *  arrays come back as regular arrays). Tolerant of older snapshots
+ *  that lack newer fields (objects, smoothing, patrols, etc.). */
+export function deserialiseTilemap(o) {
+  const cols = o.cols, rows = o.rows;
+  const N = cols * rows;
+  const textures = new Int8Array(N);
+  textures.set(o.textures ?? []);
+  const heights = new Int16Array(N);
+  if (Array.isArray(o.heights)) {
+    for (let i = 0; i < Math.min(N, o.heights.length); i++) heights[i] = o.heights[i];
+  } else {
+    heights.fill(-1);
+  }
+  return {
+    schemaVersion: o.schemaVersion ?? SCHEMA_VERSION,
+    cols, rows,
+    cellSize: o.cellSize ?? CELL_SIZE,
+    textures,
+    heights,
+    objects:   o.objects   ?? new Array(N).fill(null),
+    smoothing: o.smoothing ?? new Array(N).fill(null),
+    patrols:   o.patrols   ?? [],
+    spawn:     o.spawn     ?? null,
+    sun:       o.sun       ?? { ...DEFAULT_SUN },
+    quality:   o.quality   ?? 'fast',
+  };
+}
+
 /** Serialise to IPC-safe plain object. Typed arrays → regular arrays. */
 export function serialiseTilemap(t) {
   return {

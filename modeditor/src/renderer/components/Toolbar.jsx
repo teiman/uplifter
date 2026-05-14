@@ -10,7 +10,7 @@ const TOOLS = [
   { id: 'smooth', label: 'Suavizar',   icon: 'blur' },
 ];
 
-export function Toolbar({ onCompile, onLaunch, compiling, canLaunch }) {
+export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, saving }) {
   const tool = useStore(() => getTool());
   const view = useStore(() => getView());
 
@@ -52,6 +52,13 @@ export function Toolbar({ onCompile, onLaunch, compiling, canLaunch }) {
 
       <div style={{ flex: 1 }} />
 
+      <Button
+        icon={saving ? <Spinner size={16} /> : 'floppy-disk'}
+        disabled={saving}
+        onClick={onSave}
+      >
+        Guardar
+      </Button>
       <Button
         intent="primary"
         icon={compiling ? <Spinner size={16} /> : 'build'}

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { makeEmptyTilemap, BRUSH_PALETTE, PALETTE, SEA_LEVEL_H } from '../../shared/types.mjs';
+import { makeEmptyTilemap, deserialiseTilemap, BRUSH_PALETTE, PALETTE, SEA_LEVEL_H } from '../../shared/types.mjs';
 
 /**
  * Minimal external store: mutable singleton + subscriber set. Components
@@ -32,8 +32,18 @@ export function getSnapshot() {
   return state.revision;
 }
 
+/**
+ * Subscribe to the store and run `selector` on every revision bump.
+ *
+ * Implementation note: we deliberately use `state.revision` as the
+ * external snapshot (not the selector's return value), because most
+ * selectors return live references into the store (tilemap, sun, etc.)
+ * which never change identity even when their fields mutate. Using
+ * revision as the snapshot guarantees React re-renders on every notify().
+ */
 export function useStore(selector) {
-  return useSyncExternalStore(subscribe, () => selector(state));
+  useSyncExternalStore(subscribe, getSnapshot);
+  return selector(state);
 }
 
 // ---------- accessors ----------
@@ -76,6 +86,12 @@ export function setQuality(q) {
 
 export function resetMap() {
   state.tilemap = makeEmptyTilemap();
+  notify();
+}
+
+/** Replace the current tilemap with a deserialised one (from disk). */
+export function loadTilemap(serialised) {
+  state.tilemap = deserialiseTilemap(serialised);
   notify();
 }
 

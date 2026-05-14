@@ -137,9 +137,14 @@ function buildMapText({ tilemap, wadKey }) {
   // ---------- water (global) ----------
   // One brush from bedrock top up to sea level, covering the whole world.
   // Liquid texture (prefix '*') makes qbsp emit warpsurface faces.
+  // The water surface sits WATER_DROP units below SEA_LEVEL_Z so beach
+  // tiles (h=0, top at SEA_LEVEL_Z) read as a slight shoreline instead
+  // of coplanar with the water — both better visually and required for
+  // qbsp to avoid coplanar-face problems.
+  const WATER_DROP = 8;
   out.push(boxBrush(
     { minX: wmin, maxX: wmax, minY: wmin, maxY: wmax,
-      minZ: BEDROCK_TOP_Z, maxZ: SEA_LEVEL_Z },
+      minZ: BEDROCK_TOP_Z, maxZ: SEA_LEVEL_Z - WATER_DROP },
     WATER_TEXTURE,
   ));
 
@@ -177,9 +182,11 @@ function buildMapText({ tilemap, wadKey }) {
       const ySouthIdx = (rows - 1) - row;
       const y0 = -gridHalfY + ySouthIdx * cellSize;
       const y1 = y0 + cellSize;
-      // Cell box: from bedrock top up to (h+1)*HEIGHT_UNIT. The terrain
-      // top is at maxZ, where objects (if any) start.
-      const terrainMaxZ = (h + 1) * HEIGHT_UNIT;
+      // Cell box: from bedrock top up to h*HEIGHT_UNIT. h=0 → top sits
+      // at exactly SEA_LEVEL_Z (= 0) so the terrain is flush with the
+      // water surface — what reads as a beach. h=1 → one cube above sea
+      // level, and so on. h=-1 (the default) is submerged, no brush.
+      const terrainMaxZ = h * HEIGHT_UNIT;
       out.push(boxBrush(
         { minX: x0, maxX: x1, minY: y0, maxY: y1,
           minZ: BEDROCK_TOP_Z, maxZ: terrainMaxZ },

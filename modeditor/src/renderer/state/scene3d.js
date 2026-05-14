@@ -90,12 +90,12 @@ export function buildScene(tilemap) {
   const gridHalfX = (cols * CELL_SIZE) / 2;
   const gridHalfY = (rows * CELL_SIZE) / 2;
 
-  // Global water surface — a thin slab at sea level, only a thin top
-  // visible. We could draw a single quad, but a flat box keeps the code
-  // uniform.
+  // Global water surface — visible top sits WATER_DROP below SEA_LEVEL_Z
+  // so beaches (h=0) read as slight shoreline. Matches the mapWriter.
+  const WATER_DROP = 8;
   pushBox(out,
-    -WORLD_HALF, -WORLD_HALF, SEA_LEVEL_Z - 1,
-     WORLD_HALF,  WORLD_HALF, SEA_LEVEL_Z,
+    -WORLD_HALF, -WORLD_HALF, SEA_LEVEL_Z - WATER_DROP - 1,
+     WORLD_HALF,  WORLD_HALF, SEA_LEVEL_Z - WATER_DROP,
     WATER_COLOR,
   );
 
@@ -111,7 +111,8 @@ export function buildScene(tilemap) {
       const ySouthIdx = (rows - 1) - row;
       const y0 = -gridHalfY + ySouthIdx * CELL_SIZE;
       const y1 = y0 + CELL_SIZE;
-      const terrainTopZ = (h + 1) * HEIGHT_UNIT;
+      // Match mapWriter: h*HEIGHT_UNIT puts h=0 flush with sea level.
+      const terrainTopZ = h * HEIGHT_UNIT;
 
       let rgb = DEFAULT_LAND;
       const texIdx = tilemap.textures[i];

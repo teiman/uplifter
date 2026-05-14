@@ -299,8 +299,8 @@ export function Viewport3D() {
       let dx = 0, dy = 0, dz = 0;
       if (keys.w) { dx += fwd[0]; dy += fwd[1]; dz += fwd[2]; }
       if (keys.s) { dx -= fwd[0]; dy -= fwd[1]; dz -= fwd[2]; }
-      if (keys.d) { dx += right[0]; dy += right[1]; }
-      if (keys.a) { dx -= right[0]; dy -= right[1]; }
+      if (keys.a) { dx += right[0]; dy += right[1]; }
+      if (keys.d) { dx -= right[0]; dy -= right[1]; }
       if (keys.space) dz += 1;
       if (keys.ctrl)  dz -= 1;
       cam.target[0] += dx * speed;
@@ -350,7 +350,7 @@ export function Viewport3D() {
     const cam = camRef.current;
     if (drag.mode === 'look' || drag.mode === 'orbit') {
       const sensitivity = 0.005;
-      cam.yaw   -= dx * sensitivity;
+      cam.yaw   += dx * sensitivity;
       cam.pitch -= dy * sensitivity;
       const max = Math.PI / 2 - 0.05;
       if (cam.pitch >  max) cam.pitch =  max;

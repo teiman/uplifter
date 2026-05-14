@@ -10,7 +10,9 @@ contextBridge.exposeInMainWorld('modeditor', {
   },
 
   tilemap: {
-    exportMap: (payload) => ipcRenderer.invoke('tilemap:exportMap', payload ?? {}),
+    save:       (payload) => ipcRenderer.invoke('tilemap:save',      payload ?? {}),
+    loadLast:   (payload) => ipcRenderer.invoke('tilemap:loadLast',  payload ?? {}),
+    exportMap:  (payload) => ipcRenderer.invoke('tilemap:exportMap', payload ?? {}),
   },
 
   compile: {
