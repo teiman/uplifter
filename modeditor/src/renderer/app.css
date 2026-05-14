@@ -1,0 +1,111 @@
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #1c2127;
+  color: #f5f8fa;
+}
+
+.app-root {
+  display: grid;
+  grid-template-columns: 240px 1fr 300px;
+  grid-template-rows: 40px 1fr 160px;
+  grid-template-areas:
+    "toolbar toolbar toolbar"
+    "left    canvas  right"
+    "left    log     right";
+  height: 100vh;
+  width: 100vw;
+}
+
+.app-toolbar  { grid-area: toolbar; }
+.app-left     { grid-area: left;    overflow: auto; }
+.app-canvas   { grid-area: canvas;  position: relative; background: #2a2f37; overflow: hidden; }
+.app-right    { grid-area: right;   overflow: auto; }
+.app-log      { grid-area: log;     overflow: auto; background: #10141a; }
+
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  height: 100%;
+  border-bottom: 1px solid #2c3138;
+}
+
+.panel {
+  padding: 10px;
+  border-bottom: 1px solid #2c3138;
+}
+.panel-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8da0b8;
+  margin-bottom: 6px;
+}
+
+.palette {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.palette-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: rgba(255,255,255,0.04);
+  cursor: pointer;
+  font-size: 11px;
+  text-align: center;
+  color: #e5edf6;
+}
+.palette-swatch:hover { background: rgba(255,255,255,0.08); }
+.palette-swatch.selected {
+  border-color: #2d72d2;
+  background: rgba(45, 114, 210, 0.18);
+}
+.palette-swatch .swatch-label {
+  font-size: 11px;
+  line-height: 1.1;
+}
+.palette-swatch .swatch-preview {
+  height: 48px;
+  border-radius: 2px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+
+.log-line {
+  padding: 1px 8px;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.log-line.meta   { color: #8da0b8; }
+.log-line.stdout { color: #d6e3f0; }
+.log-line.stderr { color: #f5817b; }
+
+.canvas2d-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+.canvas2d-wrap canvas {
+  image-rendering: pixelated;
+  background: #1c2127;
+}

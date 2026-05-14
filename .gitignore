@@ -1,0 +1,27 @@
+# Node
+node_modules/
+*.log
+npm-debug.log*
+
+# Vite build output (regenerated)
+modeditor/dist/
+
+# Editor temp/runtime
+modeditor/tmp/
+modeditor/.vite/
+
+# OS / IDE clutter
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+
+# ericw-tools binaries: 200+ MB, easier to keep in source-of-truth (atlasmaper)
+# and re-copy than to vendor. Comment this line out if you want them committed.
+modeditor/bin/
+
+# Compiled mod outputs (regenerate from the modeditor)
+modeditor/*.bsp
+modeditor/*.pts
+modeditor/*.prt
+modeditor/*.lit

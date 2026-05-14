@@ -1,0 +1,28 @@
+{
+  "name": "modeditor",
+  "productName": "Uplifter ModEditor",
+  "version": "0.0.1",
+  "description": "Map editor for the Uplifter Quake mod. Builds large (±16384) BSP2 outdoor maps for ironwail.",
+  "main": "src/main/index.js",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "npm run build && electron .",
+    "dev": "concurrently -k -n vite,electron -c blue,green \"vite\" \"wait-on tcp:5173 && electron . --dev\"",
+    "build": "vite build",
+    "electron": "electron ."
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^31.7.7",
+    "vite": "^6.0.0",
+    "wait-on": "^8.0.1"
+  },
+  "dependencies": {
+    "@blueprintjs/core": "^5.16.4",
+    "@blueprintjs/icons": "^5.13.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}
