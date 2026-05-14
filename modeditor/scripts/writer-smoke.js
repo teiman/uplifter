@@ -8,7 +8,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { makeEmptyTilemap, SEA_LEVEL_H, PALETTE } = require('../src/shared/types.js');
+const { makeEmptyTilemap, SEA_LEVEL_H, PALETTE, SPECIAL_OBJECTS } = require('../src/shared/types.js');
 const { buildMapText, wadKeyFromPaths } = require('../src/main/mapWriter.js');
 
 const t = makeEmptyTilemap();
@@ -22,10 +22,21 @@ for (let dr = -4; dr < 4; dr++) {
     const c = cx + dc;
     const i = r * t.cols + c;
     t.textures[i] = tierraIdx;
-    // Higher near the centre.
     const d = Math.max(Math.abs(dr), Math.abs(dc));
     t.heights[i] = Math.max(0, 2 - d);
   }
+}
+// Drop one of every object kind on the island.
+const objCells = [
+  [cy - 3, cx - 3, 'casa'],
+  [cy - 3, cx + 2, 'rascacielos'],
+  [cy + 2, cx - 3, 'lampara'],
+  [cy + 2, cx + 2, 'arbol'],
+  [cy,     cx - 2, 'arbusto'],
+  [cy,     cx + 1, 'roca'],
+];
+for (const [r, c, kind] of objCells) {
+  t.objects[r * t.cols + c] = { kind };
 }
 
 const wads = [

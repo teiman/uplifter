@@ -26,15 +26,18 @@ const { BIN_DIR, TMP_DIR } = require('./paths');
 const QBSP_FLAGS = ['-bsp2', '-subdivide', '1024', '-worldextent', '32768', '-leaktest'];
 
 // Fast-profile light flags:
-//   -world_units_per_luxel 32  — coarse lightmaps (1 luxel per 32u of world,
-//     vs default 16). Outputs DECOUPLED_LM BSPX lump, supported by ironwail
-//     and other post-quakespasm engines. ~3× faster on Uplifter's huge
-//     surfaces; bumps BSP size ~30%; visibly coarser shadows on close detail
-//     but invisible from helicopter altitude.
-//   -sunsamples 1  — single sample for sun penumbra instead of 100. Sun
-//     shadows go from soft-edged to hard-edged. Combined with the coarse
-//     luxels this gives an 8× speedup overall on a typical Uplifter map.
-const FAST_LIGHT_FLAGS = ['-world_units_per_luxel', '32', '-sunsamples', '1'];
+//   -sunsamples 1  — single sample for sun penumbra instead of the default
+//     100. Sun shadows go from soft-edged to hard-edged. Safe (standard
+//     lightmap format), ~40% speedup on Uplifter's big outdoor surfaces.
+//
+// Things we tried that we DON'T use:
+//   -world_units_per_luxel 32  — 3× faster but outputs the DECOUPLED_LM
+//     BSPX lump, which ironwail (and most engines) don't decode. The .bsp
+//     loads but everything renders pitch black.
+//   qbsp -lmscale n  — also emits a BSPX lump (LMSCALE), and combined
+//     with -subdivide 1024 it produces faces beyond the 256-luxel motor
+//     limit ("Bad surface extents" errors).
+const FAST_LIGHT_FLAGS = ['-sunsamples', '1'];
 
 const PROFILES = {
   fast: [

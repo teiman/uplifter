@@ -95,17 +95,23 @@ const PALETTE = [
   { id: 'plaza',            label: 'Plaza',         tex: TEXTURES.plaza,             color: '#a8a89a' },
 ];
 
-/** Special objects that can live in a cell (mutually exclusive with
- *  smoothing terrain). For now metadata only — geometry emission lands
- *  in a later milestone. */
+/** Special objects placed in a cell. See types.mjs for the field spec. */
 const SPECIAL_OBJECTS = [
-  { kind: 'casa',        label: 'Casa' },
-  { kind: 'rascacielos', label: 'Rascacielos' },
-  { kind: 'lampara',     label: 'Lámpara' },
-  { kind: 'arbol',       label: 'Árbol' },
-  { kind: 'arbusto',     label: 'Arbusto' },
-  { kind: 'roca',        label: 'Roca' },
+  { kind: 'casa',        label: 'Casa',        glyph: '⌂', color: '#c08c4a',
+    heightU: 128, footprint: 0.9, tex: 'cement1' },
+  { kind: 'rascacielos', label: 'Rascacielos', glyph: '▮', color: '#8888a0',
+    heightU: 1024, footprint: 0.9, tex: 'cement1' },
+  { kind: 'lampara',     label: 'Lámpara',     glyph: '✦', color: '#f0d870',
+    heightU: 192, footprint: 0.18, tex: 'metal1_1',
+    light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
+  { kind: 'arbol',       label: 'Árbol',       glyph: '♣', color: '#3a8030',
+    heightU: 192, footprint: 0.5, tex: 'dirt' },
+  { kind: 'arbusto',     label: 'Arbusto',     glyph: '♠', color: '#4a7040',
+    heightU: 32, footprint: 0.6, tex: 'dirt' },
+  { kind: 'roca',        label: 'Roca',        glyph: '◆', color: '#7a7a7a',
+    heightU: 48, footprint: 0.5, tex: 'dirt' },
 ];
+const OBJECT_BY_KIND = new Map(SPECIAL_OBJECTS.map(o => [o.kind, o]));
 
 /** Smoothing terrains (mutually exclusive with special objects). */
 const SMOOTHING_KINDS = ['rampa', 'bevel', 'prisma'];
@@ -205,6 +211,7 @@ module.exports = {
   BEDROCK_TEXTURE,
   PALETTE,
   SPECIAL_OBJECTS,
+  OBJECT_BY_KIND,
   SMOOTHING_KINDS,
   makeEmptyTilemap,
   isWaterCell,

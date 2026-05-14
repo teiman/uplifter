@@ -77,6 +77,7 @@ function registerIpc(getWindow) {
     const send = (entry) => {
       try { win.webContents.send('compile:log', entry); } catch {}
     };
+    const startedAt = Date.now();
     try {
       const t = deserialiseTilemap(tilemap);
       const wads = await listWads();
@@ -89,11 +90,16 @@ function registerIpc(getWindow) {
         send({ stream: 'meta', tool: 'mapWriter', line: `WARNING: ${w}` });
       }
       const result = await compileMap(basename, send, { quality: t.quality || 'fast' });
-      return result;
+      const elapsedMs = Date.now() - startedAt;
+      return { ...result, elapsedMs };
     } catch (err) {
       console.error('[compile:run]', err);
       send({ stream: 'meta', tool: 'compile', line: `ERROR: ${err.message}` });
-      return { ok: false, leaked: false, bspPath: null, lastTool: 'spawn', exitCode: -1, error: err.message };
+      return {
+        ok: false, leaked: false, bspPath: null, lastTool: 'spawn',
+        exitCode: -1, error: err.message,
+        elapsedMs: Date.now() - startedAt,
+      };
     }
   });
 

@@ -32,7 +32,7 @@ const {
   BEDROCK_TOP_Z, BEDROCK_THICKNESS,
   SKY_TOP_Z, SKY_WALL_THICKNESS,
   SKY_TEXTURE, WATER_TEXTURE, BEDROCK_TEXTURE,
-  PALETTE,
+  PALETTE, OBJECT_BY_KIND,
 } = require('../shared/types');
 
 /** Fixed sky skin name. Resolved by the engine to gfx/env/<name>{bk,dn,...}.tga. */
@@ -143,17 +143,22 @@ function buildMapText({ tilemap, wadKey }) {
     WATER_TEXTURE,
   ));
 
-  // ---------- terrain cells ----------
+  // ---------- terrain cells + objects ----------
   // Cell (col, row) maps to world XY centred on origin.
   //   x0 = -gridHalfX + col * cellSize
   //   row 0 is the NORTH edge (largest Y). Flip:
   //   ySouthIdx = (rows - 1) - row
   //   y0 = -gridHalfY + ySouthIdx * cellSize
   //
-  // Only cells with height >= SEA_LEVEL_H emit a brush. Submerged cells
-  // are covered by the global water brush.
+  // Only emerged cells (height >= SEA_LEVEL_H) emit a terrain brush.
+  // Submerged cells are covered by the global water brush.
+  // Objects sit on top of the cell's terrain.
   let landCount = 0;
   let untexturedLand = 0;
+  // Collected light entities from object placements (e.g. lamps). Emitted
+  // after worldspawn so they live in their own `{ classname light }` blocks.
+  const pendingLights = [];
+
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       const i = row * cols + col;
@@ -163,10 +168,6 @@ function buildMapText({ tilemap, wadKey }) {
       const texIdx = textures[i];
       let tex = texForPaletteIdx(texIdx);
       if (!tex || tex === WATER_TEXTURE) {
-        // Default an emerged but unpainted cell to dirt so qbsp doesn't
-        // see an empty texture name. Also: a cell with paint=agua but
-        // above sea level — promote to dirt (water painting was just a
-        // shorthand for "below sea level", which this cell isn't).
         tex = BEDROCK_TEXTURE;
         untexturedLand++;
       }
@@ -176,17 +177,48 @@ function buildMapText({ tilemap, wadKey }) {
       const ySouthIdx = (rows - 1) - row;
       const y0 = -gridHalfY + ySouthIdx * cellSize;
       const y1 = y0 + cellSize;
-
-      // Cell box: from bedrock top (so the cell's sides butt against the
-      // bedrock + water column, no gaps) up to (h+1)*HEIGHT_UNIT. Storing
-      // h=0 → top at HEIGHT_UNIT means the surface is one block above
-      // sea level — what the designer expects when "raising a cell out
-      // of the water by one click."
-      const minZ = BEDROCK_TOP_Z;
-      const maxZ = (h + 1) * HEIGHT_UNIT;
-
-      out.push(boxBrush({ minX: x0, maxX: x1, minY: y0, maxY: y1, minZ, maxZ }, tex));
+      // Cell box: from bedrock top up to (h+1)*HEIGHT_UNIT. The terrain
+      // top is at maxZ, where objects (if any) start.
+      const terrainMaxZ = (h + 1) * HEIGHT_UNIT;
+      out.push(boxBrush(
+        { minX: x0, maxX: x1, minY: y0, maxY: y1,
+          minZ: BEDROCK_TOP_Z, maxZ: terrainMaxZ },
+        tex,
+      ));
       landCount++;
+
+      // ---- object on this cell ----
+      const obj = tilemap.objects?.[i];
+      if (obj) {
+        const meta = OBJECT_BY_KIND.get(obj.kind);
+        if (meta) {
+          // Inset from cell edges proportional to footprint.
+          // footprint=1 → fills the cell; footprint=0.5 → half-cell box centred.
+          const inset = (cellSize * (1 - meta.footprint)) / 2;
+          const ox0 = x0 + inset;
+          const ox1 = x1 - inset;
+          const oy0 = y0 + inset;
+          const oy1 = y1 - inset;
+          const oz0 = terrainMaxZ;
+          const oz1 = terrainMaxZ + meta.heightU;
+          out.push(boxBrush(
+            { minX: ox0, maxX: ox1, minY: oy0, maxY: oy1,
+              minZ: oz0, maxZ: oz1 },
+            meta.tex,
+          ));
+          // Optional point light (lamp).
+          if (meta.light) {
+            const cx = (ox0 + ox1) / 2;
+            const cy = (oy0 + oy1) / 2;
+            const lz = terrainMaxZ + meta.light.offsetZ;
+            pendingLights.push({
+              x: cx, y: cy, z: lz,
+              intensity: meta.light.intensity,
+              color: meta.light.color,
+            });
+          }
+        }
+      }
     }
   }
   if (untexturedLand > 0) {
@@ -197,6 +229,16 @@ function buildMapText({ tilemap, wadKey }) {
   }
 
   out.push('}');  // close worldspawn
+
+  // ---------- point lights from object placements ----------
+  for (const L of pendingLights) {
+    out.push('{');
+    out.push('"classname" "light"');
+    out.push(`"origin" "${Math.round(L.x)} ${Math.round(L.y)} ${Math.round(L.z)}"`);
+    out.push(`"light" "${L.intensity}"`);
+    if (L.color) out.push(`"_color" "${L.color}"`);
+    out.push('}');
+  }
 
   // ---------- info_player_start ----------
   // Spawn the player above the centre of the map, at mid-ceiling. The

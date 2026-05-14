@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { makeEmptyTilemap, PALETTE, SEA_LEVEL_H } from '../../shared/types.mjs';
+import { makeEmptyTilemap, BRUSH_PALETTE, PALETTE, SEA_LEVEL_H } from '../../shared/types.mjs';
 
 /**
  * Minimal external store: mutable singleton + subscriber set. Components
@@ -10,9 +10,10 @@ import { makeEmptyTilemap, PALETTE, SEA_LEVEL_H } from '../../shared/types.mjs';
  */
 const state = {
   tilemap: makeEmptyTilemap(),
-  selectedPaletteIdx: 0,     // PALETTE index, -1 = none
-  tool: 'paint',             // 'paint' | 'raise' | 'lower' | 'smooth'
-  heightDelta: 1,            // how much each raise/lower click changes
+  selectedBrushIdx: 0,       // index into BRUSH_PALETTE
+  tool: 'paint',             // 'paint' (texture or object) | 'raise' | 'lower' | 'smooth'
+  view: '2d',                // '2d' | '3d'
+  heightDelta: 1,
   revision: 0,
 };
 
@@ -37,18 +38,24 @@ export function useStore(selector) {
 
 // ---------- accessors ----------
 export function getTilemap()        { return state.tilemap; }
-export function getPaletteIdx()     { return state.selectedPaletteIdx; }
+export function getBrushIdx()       { return state.selectedBrushIdx; }
 export function getTool()           { return state.tool; }
+export function getView()           { return state.view; }
 export function getHeightDelta()    { return state.heightDelta; }
 
 // ---------- mutators ----------
-export function setPaletteIdx(idx) {
-  state.selectedPaletteIdx = idx;
+export function setBrushIdx(idx) {
+  state.selectedBrushIdx = idx;
   notify();
 }
 
 export function setTool(tool) {
   state.tool = tool;
+  notify();
+}
+
+export function setView(view) {
+  state.view = view;
   notify();
 }
 
@@ -73,9 +80,13 @@ export function resetMap() {
 }
 
 /**
- * Apply the active tool at cell (col, row). Designed for use from mouse
- * drag handlers — idempotent within a stroke (texture paint), additive
- * for raise/lower (so dragging keeps raising).
+ * Apply the active tool at cell (col, row). Idempotent within a stroke
+ * for paint; additive for raise/lower (drag keeps raising).
+ *
+ * Painting with an object brush:
+ *   - first click on an empty cell  → place the object.
+ *   - click on a cell already holding the SAME kind → remove it.
+ *   - click on a cell holding a DIFFERENT object → replace.
  *
  * Returns true if anything changed.
  */
@@ -86,34 +97,58 @@ export function applyToolAtCell(col, row) {
   let changed = false;
   switch (state.tool) {
     case 'paint': {
-      const idx = state.selectedPaletteIdx;
-      if (idx < 0) return false;
-      const tex = PALETTE[idx];
-      // Painting 'agua' is shorthand for "submerge": drop height below sea level.
-      if (tex.id === 'agua') {
-        if (t.heights[i] >= SEA_LEVEL_H) { t.heights[i] = SEA_LEVEL_H - 1; changed = true; }
-        if (t.textures[i] !== -1)        { t.textures[i] = -1;             changed = true; }
-      } else {
-        if (t.textures[i] !== idx) { t.textures[i] = idx; changed = true; }
-        // Emerge the cell if it was submerged.
-        if (t.heights[i] < SEA_LEVEL_H) { t.heights[i] = SEA_LEVEL_H; changed = true; }
+      const brush = BRUSH_PALETTE[state.selectedBrushIdx];
+      if (!brush) return false;
+      if (brush.type === 'texture') {
+        const palIdx = PALETTE.findIndex(p => p.id === brush.id);
+        if (palIdx < 0) return false;
+        const palItem = PALETTE[palIdx];
+        if (palItem.id === 'agua') {
+          // Submerge: drop height below sea level, clear texture.
+          if (t.heights[i] >= SEA_LEVEL_H) { t.heights[i] = SEA_LEVEL_H - 1; changed = true; }
+          if (t.textures[i] !== -1)        { t.textures[i] = -1;             changed = true; }
+        } else {
+          if (t.textures[i] !== palIdx) { t.textures[i] = palIdx; changed = true; }
+          if (t.heights[i] < SEA_LEVEL_H) { t.heights[i] = SEA_LEVEL_H; changed = true; }
+        }
+      } else if (brush.type === 'object') {
+        const existing = t.objects[i];
+        if (existing && existing.kind === brush.id) {
+          // Toggle off — second click on same kind removes it.
+          t.objects[i] = null;
+          changed = true;
+        } else {
+          t.objects[i] = { kind: brush.id };
+          changed = true;
+          // Placing an object on a submerged cell makes no sense (it'd be
+          // underwater). Snap the cell up to sea level if needed.
+          if (t.heights[i] < SEA_LEVEL_H) {
+            t.heights[i] = SEA_LEVEL_H;
+            // Default a texture so the cell isn't bare on emergence.
+            if (t.textures[i] < 0) {
+              const dirtIdx = PALETTE.findIndex(p => p.id === 'tierra');
+              if (dirtIdx >= 0) t.textures[i] = dirtIdx;
+            }
+          }
+        }
       }
       break;
     }
     case 'raise': {
       t.heights[i] += state.heightDelta;
-      // Re-emerging from water? Clear water styling — caller will pick a texture.
       changed = true;
       break;
     }
     case 'lower': {
       t.heights[i] -= state.heightDelta;
-      if (t.heights[i] < SEA_LEVEL_H) t.textures[i] = -1; // submerged → no texture
+      if (t.heights[i] < SEA_LEVEL_H) {
+        t.textures[i] = -1;
+        t.objects[i] = null;  // submerged: objects vanish.
+      }
       changed = true;
       break;
     }
     case 'smooth': {
-      // Average with 4-neighbours, round to int.
       let sum = t.heights[i];
       let count = 1;
       const push = (cc, rr) => {

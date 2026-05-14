@@ -1,7 +1,7 @@
 import React from 'react';
-import { Button, ButtonGroup, Divider, Icon, Spinner } from '@blueprintjs/core';
+import { Button, ButtonGroup, Divider, Spinner } from '@blueprintjs/core';
 
-import { useStore, getTool, setTool, resetMap } from '../state/store.js';
+import { useStore, getTool, setTool, resetMap, getView, setView } from '../state/store.js';
 
 const TOOLS = [
   { id: 'paint',  label: 'Pintar',     icon: 'tint' },
@@ -12,10 +12,18 @@ const TOOLS = [
 
 export function Toolbar({ onCompile, onLaunch, compiling, canLaunch }) {
   const tool = useStore(() => getTool());
+  const view = useStore(() => getView());
 
   return (
     <div className="toolbar-row">
       <strong style={{ marginRight: 12 }}>Uplifter ModEditor</strong>
+
+      <ButtonGroup>
+        <Button icon="grid"  active={view === '2d'} onClick={() => setView('2d')}>2D</Button>
+        <Button icon="cube"  active={view === '3d'} onClick={() => setView('3d')}>3D</Button>
+      </ButtonGroup>
+
+      <Divider />
 
       <ButtonGroup>
         {TOOLS.map(t => (
@@ -24,6 +32,7 @@ export function Toolbar({ onCompile, onLaunch, compiling, canLaunch }) {
             icon={t.icon}
             active={tool === t.id}
             onClick={() => setTool(t.id)}
+            disabled={view === '3d'}
           >
             {t.label}
           </Button>

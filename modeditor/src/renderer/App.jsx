@@ -5,10 +5,11 @@ import { Toolbar } from './components/Toolbar.jsx';
 import { LeftPanel } from './components/LeftPanel.jsx';
 import { RightPanel } from './components/RightPanel.jsx';
 import { Canvas2D } from './components/Canvas2D.jsx';
+import { Viewport3D } from './components/Viewport3D.jsx';
 import { LogPanel } from './components/LogPanel.jsx';
 
 import { serialiseTilemap } from '../shared/types.mjs';
-import { getTilemap } from './state/store.js';
+import { getTilemap, useStore, getView } from './state/store.js';
 
 export function App() {
   const [log, setLog] = useState([]);
@@ -70,13 +71,14 @@ export function App() {
     try {
       const snap = serialiseTilemap(getTilemap());
       const r = await window.modeditor.compile.run({ tilemap: snap, basename: 'uplifter' });
+      const secs = r.elapsedMs != null ? (r.elapsedMs / 1000).toFixed(1) : '?';
       if (r.ok) {
         setLastBspPath(r.bspPath);
-        toast('Compilación OK', 'success');
+        toast(`Compilado en ${secs}s → ${r.bspPath}`, 'success', 6000);
       } else if (r.leaked) {
-        toast('Compilación falló: leak', 'danger', 4000);
+        toast(`Compilación falló (leak, ${secs}s)`, 'danger', 4000);
       } else {
-        toast(`Compilación falló (${r.lastTool}: ${r.exitCode})`, 'danger', 4000);
+        toast(`Compilación falló (${r.lastTool}: ${r.exitCode}, ${secs}s)`, 'danger', 4000);
       }
     } catch (err) {
       toast(`Error: ${err.message}`, 'danger', 4000);
@@ -129,7 +131,7 @@ export function App() {
         <LeftPanel />
       </div>
       <div className="app-canvas">
-        <Canvas2D />
+        <MainView />
       </div>
       <div className="app-right">
         <RightPanel />
@@ -139,4 +141,9 @@ export function App() {
       </div>
     </div>
   );
+}
+
+function MainView() {
+  const view = useStore(() => getView());
+  return view === '3d' ? <Viewport3D /> : <Canvas2D />;
 }

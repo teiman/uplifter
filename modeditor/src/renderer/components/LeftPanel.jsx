@@ -1,11 +1,11 @@
 import React from 'react';
-import { PALETTE } from '../../shared/types.mjs';
-import { useStore, getPaletteIdx, setPaletteIdx, getTool } from '../state/store.js';
+import { BRUSH_PALETTE } from '../../shared/types.mjs';
+import { useStore, getBrushIdx, setBrushIdx, getTool } from '../state/store.js';
 
-/** Patterned background used as a stand-in for the real WAD texture
- *  until we port a wadLoader. Each palette colour over a darker tint
- *  gives every swatch a visually distinct surface. */
-function previewStyle(color) {
+/** Pattern background for texture swatches: diagonal stripes over the
+ *  palette colour. Visually different from the flat coloured swatches
+ *  used for special objects. */
+function texturePreviewStyle(color) {
   return {
     backgroundColor: color,
     backgroundImage:
@@ -15,31 +15,34 @@ function previewStyle(color) {
 
 export function LeftPanel() {
   const tool = useStore(() => getTool());
-  const selected = useStore(() => getPaletteIdx());
+  const selected = useStore(() => getBrushIdx());
 
   return (
-    <>
-      <div className="panel">
-        <div className="panel-title">Textura</div>
-        {tool !== 'paint' && (
-          <div style={{ fontSize: 11, color: '#8da0b8', marginBottom: 6 }}>
-            (activa cuando la herramienta es Pintar)
-          </div>
-        )}
-        <div className="palette">
-          {PALETTE.map((p, idx) => (
-            <button
-              key={p.id}
-              className={`palette-swatch ${selected === idx ? 'selected' : ''}`}
-              onClick={() => setPaletteIdx(idx)}
-              title={p.tex}
-            >
-              <span className="swatch-label">{p.label}</span>
-              <span className="swatch-preview" style={previewStyle(p.color)} />
-            </button>
-          ))}
+    <div className="panel">
+      {tool !== 'paint' && (
+        <div style={{ fontSize: 11, color: '#8da0b8', marginBottom: 6 }}>
+          (selecciona la herramienta Pintar para usar la paleta)
         </div>
+      )}
+      <div className="palette">
+        {BRUSH_PALETTE.map((b, idx) => (
+          <button
+            key={`${b.type}-${b.id}`}
+            className={`palette-swatch ${selected === idx ? 'selected' : ''}`}
+            onClick={() => setBrushIdx(idx)}
+            title={b.label}
+          >
+            <span className="swatch-label">{b.label}</span>
+            {b.type === 'texture' ? (
+              <span className="swatch-preview" style={texturePreviewStyle(b.color)} />
+            ) : (
+              <span className="swatch-preview swatch-preview-object" style={{ backgroundColor: b.color }}>
+                <span className="swatch-glyph">{b.glyph}</span>
+              </span>
+            )}
+          </button>
+        ))}
       </div>
-    </>
+    </div>
   );
 }
