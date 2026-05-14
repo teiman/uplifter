@@ -56,17 +56,21 @@ export const PALETTE = [
  * Special objects placed in a cell. Each entry describes:
  *   - kind/label/glyph: identity for the UI palette.
  *   - color: 2D tint and 3D mesh fallback.
- *   - heightU: total height in Quake units above the cell's terrain top.
+ *   - heightU: total height in Quake units above the cell's terrain top
+ *              (when the object is a single brush — buildings use multi-
+ *              storey emission and ignore heightU; see mapWriter).
  *   - footprint: 0..1, fraction of the cell (in X/Y) the object occupies.
- *                Wide (~0.9) for buildings, narrow (~0.2) for poles/trunks.
- *   - tex: bare texture name (must exist in the WAD).
+ *                1 for buildings (so contiguous buildings fuse into blocks);
+ *                narrower (~0.5) for trees/rocks; tiny (~0.18) for lamps.
+ *   - tex: bare texture name (single-brush objects). Buildings use the
+ *          dedicated BUILDING_* constants instead — see mapWriter.
  *   - light: optional point light spec emitted with the brush.
  */
 export const SPECIAL_OBJECTS = [
   { kind: 'casa',        label: 'Casa',        glyph: '⌂', color: '#c08c4a',
-    heightU: 128, footprint: 0.9, tex: 'cement1' },
+    footprint: 1 },
   { kind: 'rascacielos', label: 'Rascacielos', glyph: '▮', color: '#8888a0',
-    heightU: 1024, footprint: 0.9, tex: 'cement1' },
+    footprint: 1 },
   { kind: 'lampara',     label: 'Lámpara',     glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
@@ -77,6 +81,19 @@ export const SPECIAL_OBJECTS = [
   { kind: 'roca',        label: 'Roca',        glyph: '◆', color: '#7a7a7a',
     heightU: 48, footprint: 0.5, tex: 'dirt' },
 ];
+
+/** Building texture identifiers (atlasmapper convention).
+ *  ROOF_METAL: top face (and bottom). Originally `iktkfl03` in text.wad;
+ *  kept as the canonical roof texture under a semantic alias.
+ *  WALL_GROUND: sides of the ground-floor storey (storefronts).
+ *  WALL_UPPER:  sides of every storey above the ground floor. */
+export const ROOF_METAL  = 'iktkfl03';
+export const WALL_GROUND = 'front';
+export const WALL_UPPER  = 'building';
+
+/** Random storeys per house cluster — atlasmapper uses 2..4 inclusive. */
+export const HOUSE_STOREYS_MIN = 2;
+export const HOUSE_STOREYS_MAX = 4;
 
 export const OBJECT_BY_KIND = new Map(SPECIAL_OBJECTS.map(o => [o.kind, o]));
 

@@ -22,7 +22,12 @@ import {
   CELL_SIZE, HEIGHT_UNIT, WORLD_HALF, SEA_LEVEL_H, SEA_LEVEL_Z,
   BEDROCK_TOP_Z, BEDROCK_THICKNESS, SKY_TOP_Z,
   PALETTE, OBJECT_BY_KIND,
+  HOUSE_STOREYS_MIN, HOUSE_STOREYS_MAX,
 } from '../../shared/types.mjs';
+
+const WALL_GROUND_RGB = [0.65, 0.50, 0.32];   // 'front' façade tint
+const WALL_UPPER_RGB  = [0.55, 0.55, 0.62];   // 'building' tint
+const ROOF_METAL_RGB  = [0.42, 0.42, 0.46];
 
 const SKY_COLOR     = [0.47, 0.71, 0.90];   // matches uplifter_blue sky
 const WATER_COLOR   = [0.18, 0.40, 0.62];
@@ -134,10 +139,37 @@ export function buildScene(tilemap) {
           const ox1 = x1 - inset;
           const oy0 = y0 + inset;
           const oy1 = y1 - inset;
-          const oz0 = terrainTopZ;
-          const oz1 = terrainTopZ + meta.heightU;
-          const orgb = OBJECT_RGB.get(obj.kind) ?? DEFAULT_LAND;
-          pushBox(out, ox0, oy0, oz0, ox1, oy1, oz1, orgb);
+          if (obj.kind === 'casa' || obj.kind === 'rascacielos') {
+            // Multi-storey building: ground storey in WALL_GROUND tint,
+            // upper storeys in WALL_UPPER, roof on top. Same shape as
+            // mapWriter so the 3D preview matches the compiled .map.
+            const isSkyscraper = obj.kind === 'rascacielos';
+            const storeys = isSkyscraper
+              ? Math.max(1, Math.ceil((SKY_TOP_Z - terrainTopZ) / HEIGHT_UNIT))
+              : Math.max(HOUSE_STOREYS_MIN, Math.min(HOUSE_STOREYS_MAX,
+                  (typeof obj.storeys === 'number' ? obj.storeys : HOUSE_STOREYS_MIN)));
+            for (let s = 0; s < storeys; s++) {
+              const sz0 = terrainTopZ + s * HEIGHT_UNIT;
+              const sz1 = (isSkyscraper && s === storeys - 1)
+                ? SKY_TOP_Z
+                : sz0 + HEIGHT_UNIT;
+              const isTop = s === storeys - 1;
+              // The 3D preview uses one colour per box; pick whichever
+              // colour dominates the visible faces. Top storey reads as
+              // ROOF on top; sides on storey 0 are WALL_GROUND, above is
+              // WALL_UPPER. We approximate with the side tint since the
+              // helicopter cam mostly sees the sides.
+              const rgb = (s === 0) ? WALL_GROUND_RGB
+                       : isTop      ? ROOF_METAL_RGB
+                       :              WALL_UPPER_RGB;
+              pushBox(out, ox0, oy0, sz0, ox1, oy1, sz1, rgb);
+            }
+          } else {
+            const oz0 = terrainTopZ;
+            const oz1 = terrainTopZ + meta.heightU;
+            const orgb = OBJECT_RGB.get(obj.kind) ?? DEFAULT_LAND;
+            pushBox(out, ox0, oy0, oz0, ox1, oy1, oz1, orgb);
+          }
         }
       }
     }

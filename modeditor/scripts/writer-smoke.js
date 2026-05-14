@@ -26,17 +26,22 @@ for (let dr = -4; dr < 4; dr++) {
     t.heights[i] = Math.max(0, 2 - d);
   }
 }
-// Drop one of every object kind on the island.
+// Drop a small cluster of houses sharing height + one of each other kind.
 const objCells = [
-  [cy - 3, cx - 3, 'casa'],
+  [cy - 3, cx - 3, 'casa', 3],
+  [cy - 3, cx - 2, 'casa', 3],   // contiguous, same height
+  [cy - 2, cx - 3, 'casa', 3],   // contiguous, same height
   [cy - 3, cx + 2, 'rascacielos'],
   [cy + 2, cx - 3, 'lampara'],
   [cy + 2, cx + 2, 'arbol'],
   [cy,     cx - 2, 'arbusto'],
   [cy,     cx + 1, 'roca'],
 ];
-for (const [r, c, kind] of objCells) {
-  t.objects[r * t.cols + c] = { kind };
+for (const cell of objCells) {
+  const [r, c, kind, storeys] = cell;
+  const o = { kind };
+  if (storeys != null) o.storeys = storeys;
+  t.objects[r * t.cols + c] = o;
 }
 
 const wads = [

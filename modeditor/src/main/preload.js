@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('modeditor', {
 
   wad: {
     listDefault: () => ipcRenderer.invoke('wad:listDefault'),
+    load: (wadPath) => ipcRenderer.invoke('wad:load', wadPath),
   },
 
   tilemap: {

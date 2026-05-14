@@ -80,11 +80,12 @@ body {
   line-height: 1.1;
 }
 .palette-swatch .swatch-preview {
-  height: 48px;
+  aspect-ratio: 1 / 1;
   border-radius: 2px;
   border: 1px solid rgba(255,255,255,0.15);
-  background-size: 16px 16px;
-  background-position: 0 0, 8px 8px;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  background-position: 0 0;
 }
 .palette-swatch .swatch-preview-object {
   display: flex;

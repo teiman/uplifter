@@ -98,9 +98,9 @@ const PALETTE = [
 /** Special objects placed in a cell. See types.mjs for the field spec. */
 const SPECIAL_OBJECTS = [
   { kind: 'casa',        label: 'Casa',        glyph: '⌂', color: '#c08c4a',
-    heightU: 128, footprint: 0.9, tex: 'cement1' },
+    footprint: 1 },
   { kind: 'rascacielos', label: 'Rascacielos', glyph: '▮', color: '#8888a0',
-    heightU: 1024, footprint: 0.9, tex: 'cement1' },
+    footprint: 1 },
   { kind: 'lampara',     label: 'Lámpara',     glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
@@ -112,6 +112,14 @@ const SPECIAL_OBJECTS = [
     heightU: 48, footprint: 0.5, tex: 'dirt' },
 ];
 const OBJECT_BY_KIND = new Map(SPECIAL_OBJECTS.map(o => [o.kind, o]));
+
+/** Building textures (atlasmapper convention). */
+const ROOF_METAL  = 'iktkfl03';
+const WALL_GROUND = 'front';
+const WALL_UPPER  = 'building';
+
+const HOUSE_STOREYS_MIN = 2;
+const HOUSE_STOREYS_MAX = 4;
 
 /** Smoothing terrains (mutually exclusive with special objects). */
 const SMOOTHING_KINDS = ['rampa', 'bevel', 'prisma'];
@@ -213,6 +221,11 @@ module.exports = {
   SPECIAL_OBJECTS,
   OBJECT_BY_KIND,
   SMOOTHING_KINDS,
+  ROOF_METAL,
+  WALL_GROUND,
+  WALL_UPPER,
+  HOUSE_STOREYS_MIN,
+  HOUSE_STOREYS_MAX,
   makeEmptyTilemap,
   isWaterCell,
   serialiseTilemap,

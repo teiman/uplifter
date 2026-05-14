@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from 'react';
-import { makeEmptyTilemap, deserialiseTilemap, BRUSH_PALETTE, PALETTE, SEA_LEVEL_H } from '../../shared/types.mjs';
+import {
+  makeEmptyTilemap, deserialiseTilemap, BRUSH_PALETTE, PALETTE, SEA_LEVEL_H,
+  HOUSE_STOREYS_MIN, HOUSE_STOREYS_MAX,
+} from '../../shared/types.mjs';
 
 /**
  * Minimal external store: mutable singleton + subscriber set. Components
@@ -95,6 +98,17 @@ export function loadTilemap(serialised) {
   notify();
 }
 
+/** Return the storeys count of any 4-connected neighbouring house, or
+ *  null if none exists. Used to make contiguous houses share a height. */
+function houseStoreysFromNeighbours(t, col, row) {
+  const check = (cc, rr) => {
+    if (cc < 0 || cc >= t.cols || rr < 0 || rr >= t.rows) return null;
+    const o = t.objects[rr * t.cols + cc];
+    return (o && o.kind === 'casa' && typeof o.storeys === 'number') ? o.storeys : null;
+  };
+  return check(col - 1, row) ?? check(col + 1, row) ?? check(col, row - 1) ?? check(col, row + 1);
+}
+
 /**
  * Apply the active tool at cell (col, row). Idempotent within a stroke
  * for paint; additive for raise/lower (drag keeps raising).
@@ -134,7 +148,19 @@ export function applyToolAtCell(col, row) {
           t.objects[i] = null;
           changed = true;
         } else {
-          t.objects[i] = { kind: brush.id };
+          const newObj = { kind: brush.id };
+          // Houses share a storey count with their 4-connected neighbours
+          // (a "block" of contiguous houses uses the same building height).
+          // Inherit from an existing neighbour if any; otherwise pick a
+          // fresh random count in [2..4]. Persisted on the object so the
+          // map compiles deterministically.
+          if (brush.id === 'casa') {
+            const inherited = houseStoreysFromNeighbours(t, col, row);
+            newObj.storeys = inherited != null
+              ? inherited
+              : (HOUSE_STOREYS_MIN + Math.floor(Math.random() * (HOUSE_STOREYS_MAX - HOUSE_STOREYS_MIN + 1)));
+          }
+          t.objects[i] = newObj;
           changed = true;
           // Placing an object on a submerged cell makes no sense (it'd be
           // underwater). Snap the cell up to sea level if needed.

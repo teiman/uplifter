@@ -17,15 +17,14 @@ const PREVIEW_URLS = (() => {
 })();
 
 /** Texture swatch background: the actual WAD texture if we have a PNG
- *  preview for it; otherwise a striped colour as a fallback. The image
- *  is repeated so the 64×64 source tiles nicely inside the 48px swatch. */
+ *  preview for it; otherwise a striped colour as a fallback. CSS sets
+ *  aspect-ratio: 1 and background-size: 100% (no-repeat) so the source
+ *  texture is shown as one zoomed-in square — clearer than tiling. */
 function texturePreviewStyle(id, color) {
   const url = PREVIEW_URLS[id];
   if (url) {
     return {
       backgroundImage: `url(${url})`,
-      backgroundSize: '48px 48px',
-      backgroundRepeat: 'repeat',
       imageRendering: 'pixelated',
     };
   }

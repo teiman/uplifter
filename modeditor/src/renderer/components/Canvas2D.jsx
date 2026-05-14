@@ -7,6 +7,23 @@ import {
   applyToolAtCell,
 } from '../state/store.js';
 
+/** Same as LeftPanel: per-palette-id PNG URL from Vite. */
+const PREVIEW_URLS = (() => {
+  const mods = import.meta.glob('../assets/textures/*.png', { eager: true, query: '?url', import: 'default' });
+  const byId = {};
+  for (const [p, url] of Object.entries(mods)) {
+    const name = p.split('/').pop().replace(/\.png$/, '');
+    byId[name] = url;
+  }
+  return byId;
+})();
+
+/** Decoded HTMLImageElement per palette index — populated as images load. */
+const TEXTURE_IMAGES = (() => {
+  const arr = new Array(PALETTE.length).fill(null);
+  return arr;
+})();
+
 /**
  * Top-down 2D editor. Pixels per cell is dynamic (zoom), centred on the
  * cursor when wheeling. We keep the canvas a fixed render-target size and
@@ -26,6 +43,9 @@ export function Canvas2D() {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const dragRef = useRef({ active: false, lastCell: null });
+  // Bumps each time an image finishes loading so the canvas redraws with
+  // the freshly available texture.
+  const [imageRev, setImageRev] = useState(0);
 
   // View transform: zoom (px/cell) + pan (top-left cell offset, fractional
   // for smooth wheel zoom centred on cursor).
@@ -34,6 +54,26 @@ export function Canvas2D() {
     offsetCellX: 0,         // first cell visible at left edge
     offsetCellY: 0,         // first cell visible at top edge
   });
+
+  // Lazy-load the texture images once per component lifetime. The shared
+  // TEXTURE_IMAGES array survives unmounts, so re-mounting is cheap.
+  useEffect(() => {
+    let cancelled = false;
+    for (let i = 0; i < PALETTE.length; i++) {
+      if (TEXTURE_IMAGES[i]) continue;
+      const url = PREVIEW_URLS[PALETTE[i].id];
+      if (!url) continue;
+      const img = new Image();
+      img.src = url;
+      img.onload = () => {
+        if (cancelled) return;
+        TEXTURE_IMAGES[i] = img;
+        // Trigger a render-cycle to flush the redraw effect below.
+        setImageRev((n) => n + 1);
+      };
+    }
+    return () => { cancelled = true; };
+  }, []);
   // Re-render trigger for the React subtree (so the "x%" label updates).
   const [, setZoomRev] = useState(0);
 
@@ -51,6 +91,8 @@ export function Canvas2D() {
     if (canvas.width !== W) canvas.width = W;
     if (canvas.height !== H) canvas.height = H;
     const ctx = canvas.getContext('2d');
+    // Crisp upscaling for pixel-art textures.
+    ctx.imageSmoothingEnabled = false;
 
     // Background fill: water blue. Anything beyond the grid stays this colour,
     // which matches the "rest of the world is ocean" mental model.
@@ -63,32 +105,95 @@ export function Canvas2D() {
     const col1 = Math.min(t.cols, Math.ceil(view.offsetCellX + W / tile));
     const row1 = Math.min(t.rows, Math.ceil(view.offsetCellY + H / tile));
 
+    const waterImg = TEXTURE_IMAGES[PALETTE.findIndex(p => p.id === 'agua')];
     for (let row = row0; row < row1; row++) {
       const sy = Math.round((row - view.offsetCellY) * tile);
       for (let col = col0; col < col1; col++) {
         const i = row * t.cols + col;
         const h = t.heights[i];
         const texIdx = t.textures[i];
-
-        let baseColor;
-        if (h < SEA_LEVEL_H) {
-          const depth = Math.min(8, SEA_LEVEL_H - h);
-          const shade = Math.max(0, 100 - depth * 8);
-          baseColor = `rgb(40, ${80 + shade * 0.4}, ${130 + shade * 0.5})`;
-        } else if (texIdx >= 0 && texIdx < PALETTE.length) {
-          baseColor = PALETTE[texIdx].color;
-        } else {
-          baseColor = '#5b6066';
-        }
         const sx = Math.round((col - view.offsetCellX) * tile);
-        ctx.fillStyle = baseColor;
-        ctx.fillRect(sx, sy, tile, tile);
+
+        if (h < SEA_LEVEL_H) {
+          // Submerged: water texture if available, else shaded blue.
+          if (waterImg) {
+            ctx.drawImage(waterImg, sx, sy, tile, tile);
+            // Depth tint on top: deeper = darker.
+            const depth = Math.min(8, SEA_LEVEL_H - h);
+            const a = depth * 0.06;
+            if (a > 0) {
+              ctx.fillStyle = `rgba(0, 0, 30, ${a})`;
+              ctx.fillRect(sx, sy, tile, tile);
+            }
+          } else {
+            const depth = Math.min(8, SEA_LEVEL_H - h);
+            const shade = Math.max(0, 100 - depth * 8);
+            ctx.fillStyle = `rgb(40, ${80 + shade * 0.4}, ${130 + shade * 0.5})`;
+            ctx.fillRect(sx, sy, tile, tile);
+          }
+        } else {
+          const img = (texIdx >= 0 && texIdx < PALETTE.length) ? TEXTURE_IMAGES[texIdx] : null;
+          if (img) {
+            ctx.drawImage(img, sx, sy, tile, tile);
+          } else {
+            // Fallback: palette colour while the image hasn't loaded yet,
+            // or for emerged-but-unpainted cells.
+            ctx.fillStyle = (texIdx >= 0 && texIdx < PALETTE.length)
+              ? PALETTE[texIdx].color
+              : '#5b6066';
+            ctx.fillRect(sx, sy, tile, tile);
+          }
+        }
 
         // Height shading on top of emerged cells.
         if (h >= SEA_LEVEL_H && h > 0) {
           const a = Math.min(0.35, h * 0.04);
           ctx.fillStyle = `rgba(255,255,255,${a})`;
           ctx.fillRect(sx, sy, tile, tile);
+        }
+
+        // Cliff outlines: draw a stroke along each side where the
+        // neighbour cell is LOWER than this one. The neighbour draws
+        // its own outline on the other side, so we never double-up.
+        // Cells outside the grid count as "submerged" (-1), so the map
+        // perimeter gets a natural outline against the ocean.
+        if (h >= SEA_LEVEL_H) {
+          const neighbour = (cc, rr) => {
+            if (cc < 0 || cc >= t.cols || rr < 0 || rr >= t.rows) return -1;
+            return t.heights[rr * t.cols + cc];
+          };
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+          ctx.lineWidth = Math.max(1, Math.round(tile / 16));
+          // Inset half a line-width so the stroke sits inside the cell.
+          const o = ctx.lineWidth / 2;
+          // West (col - 1).
+          if (neighbour(col - 1, row) < h) {
+            ctx.beginPath();
+            ctx.moveTo(sx + o, sy);
+            ctx.lineTo(sx + o, sy + tile);
+            ctx.stroke();
+          }
+          // East (col + 1).
+          if (neighbour(col + 1, row) < h) {
+            ctx.beginPath();
+            ctx.moveTo(sx + tile - o, sy);
+            ctx.lineTo(sx + tile - o, sy + tile);
+            ctx.stroke();
+          }
+          // North (row - 1).
+          if (neighbour(col, row - 1) < h) {
+            ctx.beginPath();
+            ctx.moveTo(sx,        sy + o);
+            ctx.lineTo(sx + tile, sy + o);
+            ctx.stroke();
+          }
+          // South (row + 1).
+          if (neighbour(col, row + 1) < h) {
+            ctx.beginPath();
+            ctx.moveTo(sx,        sy + tile - o);
+            ctx.lineTo(sx + tile, sy + tile - o);
+            ctx.stroke();
+          }
         }
 
         // Object marker: a small filled disc tinted by the object's
@@ -145,14 +250,16 @@ export function Canvas2D() {
     }
   }, []);
 
-  // Redraw on store changes AND on container resize.
+  // Redraw on store changes AND on container resize. imageRev is in the
+  // dep array so each texture-load triggers an extra redraw with the
+  // freshly available image.
   useEffect(() => {
     draw();
     const off = subscribe(draw);
     const ro = new ResizeObserver(draw);
     if (wrapRef.current) ro.observe(wrapRef.current);
     return () => { off(); ro.disconnect(); };
-  }, [draw]);
+  }, [draw, imageRev]);
 
   const cellFromEvent = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();

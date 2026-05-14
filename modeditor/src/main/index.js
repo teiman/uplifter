@@ -7,6 +7,8 @@ const { TMP_DIR, WADS_DIR, ensureRuntimeDirs } = require('./paths');
 const { compileMap } = require('./compileTools');
 const { deployBsp, DEFAULT_DESTINATION } = require('./deployBsp');
 const { buildMapText, wadKeyFromPaths } = require('./mapWriter');
+const { loadWad } = require('./wadLoader');
+const { ensureAutoWad } = require('./wadWriter');
 const { deserialiseTilemap } = require('../shared/types');
 
 // Note: don't read app.isPackaged here — depending on how Electron is
@@ -56,6 +58,31 @@ function registerIpc(getWindow) {
   }));
 
   ipcMain.handle('wad:listDefault', async () => listWads());
+
+  /** Decode a WAD file → list of textures with RGBA mip0 pixels.
+   *  The renderer can use this for richer texture browsing. */
+  ipcMain.handle('wad:load', async (_evt, wadPath) => {
+    try {
+      const w = await loadWad(wadPath);
+      return {
+        ok: true,
+        wad: {
+          path: w.path,
+          name: w.name,
+          textures: w.textures.map(t => ({
+            name: t.name,
+            width: t.width,
+            height: t.height,
+            // Serialise as plain Uint8Array (Uint8ClampedArray survives
+            // structured clone but downstream tooling is fussier).
+            rgba: new Uint8Array(t.rgba.buffer, t.rgba.byteOffset, t.rgba.byteLength).slice(),
+          })),
+        },
+      };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
 
   ipcMain.handle('tilemap:save', async (_evt, { tilemap, basename = 'uplifter' } = {}) => {
     try {
@@ -165,8 +192,18 @@ function registerIpc(getWindow) {
   }));
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
+  // Regenerate the synthetic auto.wad on every launch. It carries the
+  // textures the editor needs but the user's WADs don't ship — currently
+  // sky_auto (used for the world's sky box) and a few internal helpers.
+  // Writing on each launch keeps the file in sync if wadWriter.js
+  // changes.
+  try {
+    await ensureAutoWad(path.join(WADS_DIR, 'auto.wad'));
+  } catch (err) {
+    console.error('[startup] auto.wad write failed:', err);
+  }
   let mainWindow = createMainWindow();
   registerIpc(() => mainWindow);
   app.on('activate', () => {
