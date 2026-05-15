@@ -6,6 +6,7 @@ import {
 } from '../../shared/types.mjs';
 import {
   subscribe,
+  useStore,
   getTilemap,
   applyToolAtCell,
   endStroke,
@@ -528,6 +529,22 @@ export function Canvas2D() {
     setZoomRev((n) => n + 1);
     draw();
   }, [draw]);
+
+  // Auto-fit when entering area mode so the user sees the whole map at
+  // once and can click any of the 4×4 regions without panning first.
+  // Tracked with a ref initialised to null so the very first mount
+  // counts as a transition — entering area mode straight after a 3D→2D
+  // switch (where Canvas2D was just remounted) still fits the view.
+  // Mid-area zoom/pan stays untouched because the ref is updated to
+  // 'area' after the first fit, so subsequent renders are no-ops.
+  const mode = useStore(() => getMode());
+  const lastModeRef = useRef(null);
+  useEffect(() => {
+    if (lastModeRef.current !== 'area' && mode === 'area') {
+      zoomFit();
+    }
+    lastModeRef.current = mode;
+  }, [mode, zoomFit]);
 
   // ---------- paint / pan / rect ----------
   // Middle or right button = pan the viewport. Left button: paint
