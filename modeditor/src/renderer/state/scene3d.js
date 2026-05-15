@@ -25,15 +25,16 @@ import {
   PALETTE, OBJECT_BY_KIND,
   HOUSE_STOREYS_MIN, HOUSE_STOREYS_MAX,
   MESH_CHUNK_SIZE,
+  pickFaceTextures,
 } from '../../shared/types.mjs';
-
-const WALL_GROUND_RGB = [0.65, 0.50, 0.32];
-const WALL_UPPER_RGB  = [0.55, 0.55, 0.62];
-const ROOF_METAL_RGB  = [0.42, 0.42, 0.46];
 
 export const SKY_COLOR = [0.47, 0.71, 0.90];
 const WATER_COLOR    = [0.18, 0.40, 0.62];
 const DEFAULT_LAND   = [0.36, 0.30, 0.20];
+
+/** Number of cubes from BEDROCK_TOP_Z up to SEA_LEVEL_Z. Mirrors the
+ *  constant used in mapWriter so the stack-cube indexing is identical. */
+const SEAL_CUBES = -BEDROCK_TOP_Z / HEIGHT_UNIT;
 
 function hexToRgb(hex) {
   return [
@@ -43,9 +44,36 @@ function hexToRgb(hex) {
   ];
 }
 
-const PALETTE_RGB = PALETTE.map(p => hexToRgb(p.color));
-const OBJECT_RGB = new Map();
-for (const [k, o] of OBJECT_BY_KIND) OBJECT_RGB.set(k, hexToRgb(o.color));
+function scaleRgb(rgb, k) {
+  return [
+    Math.min(1, rgb[0] * k),
+    Math.min(1, rgb[1] * k),
+    Math.min(1, rgb[2] * k),
+  ];
+}
+
+/** Derive the 5 face colours for a biome from its base hex. The
+ *  multipliers mirror the visual hierarchy described in column.md:
+ *  capital lighter, base/side a touch darker, bottom very dark
+ *  (rarely seen). The 3D preview is flat-shaded; these tints are the
+ *  only cue distinguishing the parts of a column. */
+function biomeColorsFromHex(hex) {
+  const base = hexToRgb(hex);
+  return {
+    top:     base,
+    side:    scaleRgb(base, 0.85),
+    capital: scaleRgb(base, 1.18),
+    base:    scaleRgb(base, 0.92),
+    bottom:  scaleRgb(base, 0.55),
+  };
+}
+
+const PALETTE_COLORS = PALETTE.map(p => biomeColorsFromHex(p.color));
+const OBJECT_COLORS = new Map();
+for (const [k, o] of OBJECT_BY_KIND) {
+  OBJECT_COLORS.set(k, biomeColorsFromHex(o.color));
+}
+const FALLBACK_COLORS = biomeColorsFromHex('#7a5a3a');
 
 /** Mutable builder accumulator; finalise() converts to typed arrays. */
 function makeBuilder() {
@@ -62,18 +90,28 @@ function finaliseBuilder(b) {
   };
 }
 
-function pushBox(out, x0, y0, z0, x1, y1, z1, rgb) {
-  const [r, g, b] = rgb;
+/**
+ * Push an axis-aligned box's 6 faces.
+ *
+ *   colors: either a single [r,g,b] (used on every face) OR an object
+ *           { top, side, bottom } with one [r,g,b] per face group.
+ *           Side colour is shared across the 4 lateral faces.
+ */
+function pushBox(out, x0, y0, z0, x1, y1, z1, colors) {
+  const topRgb    = Array.isArray(colors) ? colors : colors.top    ?? colors.side;
+  const sideRgb   = Array.isArray(colors) ? colors : colors.side;
+  const bottomRgb = Array.isArray(colors) ? colors : colors.bottom ?? colors.side;
   const faces = [
-    { p: [[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]], n: [ 1, 0, 0] },
-    { p: [[x0,y1,z0],[x0,y0,z0],[x0,y0,z1],[x0,y1,z1]], n: [-1, 0, 0] },
-    { p: [[x1,y1,z0],[x0,y1,z0],[x0,y1,z1],[x1,y1,z1]], n: [ 0, 1, 0] },
-    { p: [[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]], n: [ 0,-1, 0] },
-    { p: [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], n: [ 0, 0, 1] },
-    { p: [[x0,y1,z0],[x1,y1,z0],[x1,y0,z0],[x0,y0,z0]], n: [ 0, 0,-1] },
+    { p: [[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]], n: [ 1, 0, 0], rgb: sideRgb },
+    { p: [[x0,y1,z0],[x0,y0,z0],[x0,y0,z1],[x0,y1,z1]], n: [-1, 0, 0], rgb: sideRgb },
+    { p: [[x1,y1,z0],[x0,y1,z0],[x0,y1,z1],[x1,y1,z1]], n: [ 0, 1, 0], rgb: sideRgb },
+    { p: [[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]], n: [ 0,-1, 0], rgb: sideRgb },
+    { p: [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], n: [ 0, 0, 1], rgb: topRgb },
+    { p: [[x0,y1,z0],[x1,y1,z0],[x1,y0,z0],[x0,y0,z0]], n: [ 0, 0,-1], rgb: bottomRgb },
   ];
   for (const f of faces) {
     const base = out.vertexCount;
+    const [r, g, b] = f.rgb;
     for (const [px, py, pz] of f.p) {
       out.positions.push(px, py, pz);
       out.normals.push(f.n[0], f.n[1], f.n[2]);
@@ -85,61 +123,110 @@ function pushBox(out, x0, y0, z0, x1, y1, z1, rgb) {
 }
 
 /**
- * Emit the terrain + object geometry for cell (col, row) into the
- * builder. No-op for submerged cells.
+ * Tallest neighbour terrain height (above sea level) for cell (col,row).
+ * Mirrors mapWriter.neighbourMaxH — used to anchor the `base` face.
+ */
+function neighbourMaxH(tilemap, col, row) {
+  const { cols, rows, heights } = tilemap;
+  let m = SEA_LEVEL_H;
+  const test = (cc, rr) => {
+    if (cc < 0 || cc >= cols || rr < 0 || rr >= rows) return;
+    const hn = heights[rr * cols + cc];
+    if (hn > m) m = hn;
+  };
+  test(col - 1, row);
+  test(col + 1, row);
+  test(col, row - 1);
+  test(col, row + 1);
+  return m;
+}
+
+/**
+ * Emit one cell's geometry as a vertical column of unit cubes following
+ * the column.md spec: bedrock-to-top stack, with face colours picked by
+ * cube position (top/side/capital/base/bottom). Submerged cells emit
+ * nothing — the global water brush covers them.
  */
 function addCellToMesh(out, tilemap, col, row, gridHalfX, gridHalfY) {
   const i = row * tilemap.cols + col;
   const h = tilemap.heights[i];
   if (h < SEA_LEVEL_H) return;
 
+  const texIdx = tilemap.textures[i];
+  const terrainColors = (texIdx >= 0 && texIdx < PALETTE_COLORS.length)
+    ? PALETTE_COLORS[texIdx]
+    : FALLBACK_COLORS;
+
+  const obj = tilemap.objects?.[i];
+  const meta = obj ? OBJECT_BY_KIND.get(obj.kind) : null;
+  const isBuilding = meta && meta.isBuilding;
+  const buildingColors = isBuilding ? OBJECT_COLORS.get(obj.kind) : null;
+  const isSkyscraper = isBuilding && obj.kind === 'rascacielos';
+
+  // Cell footprint in world coords.
   const x0 = -gridHalfX + col * CELL_SIZE;
   const x1 = x0 + CELL_SIZE;
   const ySouthIdx = (tilemap.rows - 1) - row;
   const y0 = -gridHalfY + ySouthIdx * CELL_SIZE;
   const y1 = y0 + CELL_SIZE;
-  const terrainTopZ = h * HEIGHT_UNIT;
 
-  let rgb = DEFAULT_LAND;
-  const texIdx = tilemap.textures[i];
-  if (texIdx >= 0 && texIdx < PALETTE_RGB.length) rgb = PALETTE_RGB[texIdx];
-  const lift = Math.min(0.25, h * 0.03);
-  const rgbLifted = [rgb[0] + lift, rgb[1] + lift, rgb[2] + lift];
-
-  pushBox(out, x0, y0, BEDROCK_TOP_Z, x1, y1, terrainTopZ, rgbLifted);
-
-  const obj = tilemap.objects?.[i];
-  if (!obj) return;
-  const meta = OBJECT_BY_KIND.get(obj.kind);
-  if (!meta) return;
-
-  const inset = (CELL_SIZE * (1 - meta.footprint)) / 2;
-  const ox0 = x0 + inset;
-  const ox1 = x1 - inset;
-  const oy0 = y0 + inset;
-  const oy1 = y1 - inset;
-
-  if (obj.kind === 'casa' || obj.kind === 'rascacielos') {
-    const isSkyscraper = obj.kind === 'rascacielos';
-    const storeys = isSkyscraper
-      ? Math.max(1, Math.ceil((SKY_TOP_Z - terrainTopZ) / HEIGHT_UNIT))
-      : Math.max(HOUSE_STOREYS_MIN, Math.min(HOUSE_STOREYS_MAX,
-          (typeof obj.storeys === 'number' ? obj.storeys : HOUSE_STOREYS_MIN)));
-    for (let s = 0; s < storeys; s++) {
-      const sz0 = terrainTopZ + s * HEIGHT_UNIT;
-      const sz1 = (isSkyscraper && s === storeys - 1)
-        ? SKY_TOP_Z
-        : sz0 + HEIGHT_UNIT;
-      const isTop = s === storeys - 1;
-      const sRgb = (s === 0) ? WALL_GROUND_RGB
-                 : isTop      ? ROOF_METAL_RGB
-                 :              WALL_UPPER_RGB;
-      pushBox(out, ox0, oy0, sz0, ox1, oy1, sz1, sRgb);
+  let buildingStoreys = 0;
+  if (isBuilding) {
+    if (isSkyscraper) {
+      const gap = SKY_TOP_Z - h * HEIGHT_UNIT;
+      buildingStoreys = Math.max(1, Math.ceil(gap / HEIGHT_UNIT));
+    } else {
+      buildingStoreys = Math.max(HOUSE_STOREYS_MIN, Math.min(HOUSE_STOREYS_MAX,
+        (typeof obj.storeys === 'number' ? obj.storeys : HOUSE_STOREYS_MIN)));
     }
-  } else {
+  }
+
+  // Stack indexing in cube units, k=0 = lowest cube against bedrock.
+  // Keep in lockstep with mapWriter so the .map and the 3D preview
+  // match cube for cube.
+  const terrainCubes = SEAL_CUBES + h;
+  const total = terrainCubes + buildingStoreys;
+  const neighborMaxK = SEAL_CUBES + neighbourMaxH(tilemap, col, row);
+
+  const inset = isBuilding ? (CELL_SIZE * (1 - meta.footprint)) / 2 : 0;
+  const bx0 = x0 + inset, bx1 = x1 - inset;
+  const by0 = y0 + inset, by1 = y1 - inset;
+
+  for (let k = 0; k < total; k++) {
+    const isTerrainCube = k < terrainCubes;
+    const biomeColors = isTerrainCube ? terrainColors : buildingColors;
+    const faces = pickFaceTextures(k, total, neighborMaxK, biomeColors);
+    // Default occluded faces to side; the 3D preview never culls so
+    // we paint something on every face.
+    const sideRgb   = faces.side;
+    const topRgb    = faces.top    ?? sideRgb;
+    const bottomRgb = faces.bottom ?? sideRgb;
+
+    const cubeMinZ = BEDROCK_TOP_Z + k * HEIGHT_UNIT;
+    const isSkyscraperTop = isSkyscraper && (k === total - 1);
+    const cubeMaxZ = isSkyscraperTop ? SKY_TOP_Z : cubeMinZ + HEIGHT_UNIT;
+
+    const useBuildingFootprint = !isTerrainCube && inset > 0;
+    const cx0 = useBuildingFootprint ? bx0 : x0;
+    const cx1 = useBuildingFootprint ? bx1 : x1;
+    const cy0 = useBuildingFootprint ? by0 : y0;
+    const cy1 = useBuildingFootprint ? by1 : y1;
+
+    pushBox(out, cx0, cy0, cubeMinZ, cx1, cy1, cubeMaxZ,
+      { top: topRgb, side: sideRgb, bottom: bottomRgb });
+  }
+
+  // Small decorative objects (lamp, tree, bush, rock) sit on top of
+  // the terrain column with their own footprint and height. Single
+  // box, single colour — they're not columns.
+  if (meta && !isBuilding) {
+    const decoInset = (CELL_SIZE * (1 - meta.footprint)) / 2;
+    const ox0 = x0 + decoInset, ox1 = x1 - decoInset;
+    const oy0 = y0 + decoInset, oy1 = y1 - decoInset;
+    const terrainTopZ = h * HEIGHT_UNIT;
     const oz0 = terrainTopZ;
     const oz1 = terrainTopZ + meta.heightU;
-    const orgb = OBJECT_RGB.get(obj.kind) ?? DEFAULT_LAND;
+    const orgb = OBJECT_COLORS.get(obj.kind)?.top ?? DEFAULT_LAND;
     pushBox(out, ox0, oy0, oz0, ox1, oy1, oz1, orgb);
   }
 }

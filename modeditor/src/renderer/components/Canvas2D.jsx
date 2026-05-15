@@ -17,13 +17,15 @@ import {
   setView2dCenter,
 } from '../state/store.js';
 
-/** Same as LeftPanel: per-palette-id PNG URL from Vite. */
+/** Same as LeftPanel: per-biome top.png URL from Vite. The 2D editor
+ *  shows the top face of each cell, so we always read top.png. */
 const PREVIEW_URLS = (() => {
-  const mods = import.meta.glob('../assets/textures/*.png', { eager: true, query: '?url', import: 'default' });
+  const mods = import.meta.glob('../assets/textures/*/top.png', { eager: true, query: '?url', import: 'default' });
   const byId = {};
   for (const [p, url] of Object.entries(mods)) {
-    const name = p.split('/').pop().replace(/\.png$/, '');
-    byId[name] = url;
+    const parts = p.split('/');
+    const biome = parts[parts.length - 2];
+    byId[biome] = url;
   }
   return byId;
 })();

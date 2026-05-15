@@ -33,8 +33,8 @@ const {
   SKY_TOP_Z, SKY_WALL_THICKNESS,
   SKY_TEXTURE, WATER_TEXTURE, BEDROCK_TEXTURE,
   PALETTE, OBJECT_BY_KIND,
-  ROOF_METAL, WALL_GROUND, WALL_UPPER,
   HOUSE_STOREYS_MIN, HOUSE_STOREYS_MAX,
+  pickFaceTextures, texturesFor,
 } = require('../shared/types');
 
 /** Height of one building storey in Quake units. Matches HEIGHT_UNIT so
@@ -44,7 +44,16 @@ const STOREY_HEIGHT = HEIGHT_UNIT;
 /** Fixed sky skin name. Resolved by the engine to gfx/env/<name>{bk,dn,...}.tga. */
 const SKY_NAME = 'uplifter_blue';
 
-function texForPaletteIdx(idx) {
+/** Number of cubes from BEDROCK_TOP_Z up to SEA_LEVEL_Z. Used to convert
+ *  height-units (where h=0 = sea level) into stack-cube indices (where
+ *  k=0 = the lowest cube against bedrock). */
+const SEAL_CUBES = -BEDROCK_TOP_Z / HEIGHT_UNIT;
+
+/** Fallback 5-face texture set for cells that have no palette entry but
+ *  still emerge (e.g. legacy maps). Picked to keep the cell visible. */
+const FALLBACK_BIOME_TEX = texturesFor('tierra');
+
+function biomeTexForPaletteIdx(idx) {
   if (idx < 0 || idx >= PALETTE.length) return null;
   return PALETTE[idx].tex;
 }
@@ -205,6 +214,24 @@ function buildMapText({ tilemap, wadKey }) {
     ? (col, row) => (col >= pa.c0 && col <= pa.c1 && row >= pa.r0 && row <= pa.r1)
     : () => true;
 
+  // Helper: tallest neighbour terrain height (above sea level), in
+  // height-units. Submerged neighbours don't contribute. Falls back to
+  // SEA_LEVEL_H when all neighbours are below water — keeps the column
+  // "base" at the first cube above sea level in that case.
+  function neighbourMaxH(col, row) {
+    let m = SEA_LEVEL_H;
+    const test = (cc, rr) => {
+      if (cc < 0 || cc >= cols || rr < 0 || rr >= rows) return;
+      const hn = heights[rr * cols + cc];
+      if (hn > m) m = hn;
+    };
+    test(col - 1, row);
+    test(col + 1, row);
+    test(col, row - 1);
+    test(col, row + 1);
+    return m;
+  }
+
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       const i = row * cols + col;
@@ -213,112 +240,116 @@ function buildMapText({ tilemap, wadKey }) {
       if (!inArea(col, row)) continue;
 
       const texIdx = textures[i];
-      let tex = texForPaletteIdx(texIdx);
-      if (!tex || tex === WATER_TEXTURE) {
-        tex = BEDROCK_TEXTURE;
+      let terrainBiomeTex = biomeTexForPaletteIdx(texIdx);
+      if (!terrainBiomeTex) {
+        terrainBiomeTex = FALLBACK_BIOME_TEX;
         untexturedLand++;
       }
+
+      // Object on this cell: buildings extend the column stack; small
+      // decorative objects (lamp, tree, etc.) emit their own brush
+      // alongside the terrain column.
+      const obj = tilemap.objects?.[i];
+      const objMeta = obj ? OBJECT_BY_KIND.get(obj.kind) : null;
+      const isBuilding = objMeta && objMeta.isBuilding;
+      const buildingBiomeTex = isBuilding ? objMeta.tex : null;
+      const isSkyscraper = isBuilding && obj.kind === 'rascacielos';
 
       const x0 = -gridHalfX + col * cellSize;
       const x1 = x0 + cellSize;
       const ySouthIdx = (rows - 1) - row;
       const y0 = -gridHalfY + ySouthIdx * cellSize;
       const y1 = y0 + cellSize;
-      // Cell box: from bedrock top up to h*HEIGHT_UNIT. h=0 → top sits
-      // at exactly SEA_LEVEL_Z (= 0) so the terrain is flush with the
-      // water surface — what reads as a beach. h=1 → one cube above sea
-      // level, and so on. h=-1 (the default) is submerged, no brush.
-      const terrainMaxZ = h * HEIGHT_UNIT;
-      // Terrain is surrounded by the global water brush and never seals
-      // the world, so it always goes in func_detail.
-      detailBrushes.push(boxBrush(
-        { minX: x0, maxX: x1, minY: y0, maxY: y1,
-          minZ: BEDROCK_TOP_Z, maxZ: terrainMaxZ },
-        tex,
-      ));
+
+      // Building storey count. Skyscrapers reach SKY_TOP_Z exactly; the
+      // top storey is widened so the last cube butts the ceiling.
+      let buildingStoreys = 0;
+      if (isBuilding) {
+        if (isSkyscraper) {
+          const gap = SKY_TOP_Z - h * HEIGHT_UNIT;
+          buildingStoreys = Math.max(1, Math.ceil(gap / STOREY_HEIGHT));
+        } else {
+          buildingStoreys = Math.max(HOUSE_STOREYS_MIN, Math.min(HOUSE_STOREYS_MAX,
+            (typeof obj.storeys === 'number' ? obj.storeys : HOUSE_STOREYS_MIN)));
+        }
+      }
+
+      // Stack indexing in cube units, k=0 = lowest cube against bedrock.
+      //   terrainCubes  = SEAL_CUBES (sub-water) + h (emerged terrain)
+      //   total         = terrainCubes + buildingStoreys
+      //   neighborMax_k = SEAL_CUBES + neighbourMaxH(col,row)
+      //                   (so the base anchors at the first cube above
+      //                    the tallest adjacent terrain)
+      const terrainCubes = SEAL_CUBES + h;
+      const total = terrainCubes + buildingStoreys;
+      const neighborMaxK = SEAL_CUBES + neighbourMaxH(col, row);
+
+      // Building footprint inset (centred in the cell). Terrain cubes
+      // always fill the full cell.
+      const inset = isBuilding ? (cellSize * (1 - objMeta.footprint)) / 2 : 0;
+      const bx0 = x0 + inset, bx1 = x1 - inset;
+      const by0 = y0 + inset, by1 = y1 - inset;
+
+      for (let k = 0; k < total; k++) {
+        const isTerrainCube = k < terrainCubes;
+        const biomeTex = isTerrainCube ? terrainBiomeTex : buildingBiomeTex;
+        const faces = pickFaceTextures(k, total, neighborMaxK, biomeTex);
+        // Default occluded faces to side — keeps face data clean even
+        // if qbsp inspects the brush before culling.
+        const sideTex   = faces.side;
+        const topTex    = faces.top    ?? sideTex;
+        const bottomTex = faces.bottom ?? sideTex;
+
+        const cubeMinZ = BEDROCK_TOP_Z + k * HEIGHT_UNIT;
+        // Skyscraper top cube extends to SKY_TOP_Z exactly so it seals
+        // the world ceiling.
+        const isSkyscraperTop = isSkyscraper && (k === total - 1);
+        const cubeMaxZ = isSkyscraperTop ? SKY_TOP_Z : cubeMinZ + HEIGHT_UNIT;
+
+        // Terrain cubes fill the full cell; building cubes use the
+        // building's footprint inset.
+        const useBuildingFootprint = !isTerrainCube && inset > 0;
+        const cx0 = useBuildingFootprint ? bx0 : x0;
+        const cx1 = useBuildingFootprint ? bx1 : x1;
+        const cy0 = useBuildingFootprint ? by0 : y0;
+        const cy1 = useBuildingFootprint ? by1 : y1;
+
+        const brush = boxBrush(
+          { minX: cx0, maxX: cx1, minY: cy0, maxY: cy1,
+            minZ: cubeMinZ, maxZ: cubeMaxZ },
+          sideTex,
+          { topTex, sideTex, bottomTex },
+        );
+        // Skyscraper top cube seals the sky → worldspawn. Everything
+        // else (terrain, houses, lower skyscraper cubes) is non-sealing
+        // and goes into func_detail.
+        if (isSkyscraperTop) out.push(brush);
+        else                 detailBrushes.push(brush);
+      }
       landCount++;
 
-      // ---- object on this cell ----
-      const obj = tilemap.objects?.[i];
-      if (obj) {
-        const meta = OBJECT_BY_KIND.get(obj.kind);
-        if (meta) {
-          // Inset from cell edges proportional to footprint.
-          // footprint=1 → fills the cell; contiguous full-cell objects fuse
-          // into a block. footprint<1 → object sits centred in the cell
-          // with a margin (trees, rocks, lamp posts).
-          const inset = (cellSize * (1 - meta.footprint)) / 2;
-          const ox0 = x0 + inset;
-          const ox1 = x1 - inset;
-          const oy0 = y0 + inset;
-          const oy1 = y1 - inset;
-
-          if (obj.kind === 'casa' || obj.kind === 'rascacielos') {
-            // Multi-storey buildings: emit one brush per storey so each
-            // can carry the right texture (WALL_GROUND on storey 0,
-            // WALL_UPPER above, ROOF_METAL on the top face).
-            //
-            // - Casa: storey count is sortable per cluster, persisted as
-            //   obj.storeys when placed. Fallback to STOREYS_MIN if the
-            //   field is missing (e.g. loaded from an old save).
-            // - Rascacielos: sealing brush, climbs all the way to
-            //   SKY_TOP_Z. Storey count derived from the gap.
-            const isSkyscraper = obj.kind === 'rascacielos';
-            const storeys = isSkyscraper
-              ? Math.max(1, Math.ceil((SKY_TOP_Z - terrainMaxZ) / STOREY_HEIGHT))
-              : Math.max(HOUSE_STOREYS_MIN, Math.min(HOUSE_STOREYS_MAX,
-                  (typeof obj.storeys === 'number' ? obj.storeys : HOUSE_STOREYS_MIN)));
-
-            for (let s = 0; s < storeys; s++) {
-              const sz0 = terrainMaxZ + s * STOREY_HEIGHT;
-              // Top storey of a skyscraper snaps to SKY_TOP_Z exactly so
-              // the brush butts the sky ceiling and actually seals the
-              // map vertically.
-              const sz1 = (isSkyscraper && s === storeys - 1)
-                ? SKY_TOP_Z
-                : sz0 + STOREY_HEIGHT;
-              const isTopStorey = s === storeys - 1;
-              const sideTex = (s === 0) ? WALL_GROUND : WALL_UPPER;
-              // The roof is only meaningful on the topmost storey of a
-              // house. Skyscrapers butt the sky ceiling and the top face
-              // is never seen — but we still write it as ROOF_METAL for
-              // consistency.
-              const topTex = isTopStorey ? ROOF_METAL : sideTex;
-              const brush = boxBrush(
-                { minX: ox0, maxX: ox1, minY: oy0, maxY: oy1,
-                  minZ: sz0, maxZ: sz1 },
-                sideTex,
-                { topTex, sideTex, bottomTex: sideTex },
-              );
-              if (isSkyscraper) {
-                out.push(brush);            // worldspawn (sealing).
-              } else {
-                detailBrushes.push(brush);   // func_detail.
-              }
-            }
-          } else {
-            // Single-brush objects (lamp, tree, bush, rock). Use the
-            // declared heightU and tex on every face.
-            const oz0 = terrainMaxZ;
-            const oz1 = terrainMaxZ + meta.heightU;
-            const brush = boxBrush(
-              { minX: ox0, maxX: ox1, minY: oy0, maxY: oy1,
-                minZ: oz0, maxZ: oz1 },
-              meta.tex,
-            );
-            detailBrushes.push(brush);
-            // Optional point light (lamp).
-            if (meta.light) {
-              const cx = (ox0 + ox1) / 2;
-              const cy = (oy0 + oy1) / 2;
-              const lz = terrainMaxZ + meta.light.offsetZ;
-              pendingLights.push({
-                x: cx, y: cy, z: lz,
-                intensity: meta.light.intensity,
-                color: meta.light.color,
-              });
-            }
-          }
+      // Small decorative objects (lamp, tree, bush, rock): single brush
+      // on top of the terrain, plus optional point light.
+      if (objMeta && !isBuilding) {
+        const decoInset = (cellSize * (1 - objMeta.footprint)) / 2;
+        const ox0 = x0 + decoInset, ox1 = x1 - decoInset;
+        const oy0 = y0 + decoInset, oy1 = y1 - decoInset;
+        const terrainTopZ = h * HEIGHT_UNIT;
+        const oz0 = terrainTopZ;
+        const oz1 = terrainTopZ + objMeta.heightU;
+        detailBrushes.push(boxBrush(
+          { minX: ox0, maxX: ox1, minY: oy0, maxY: oy1, minZ: oz0, maxZ: oz1 },
+          objMeta.tex,
+        ));
+        if (objMeta.light) {
+          const cx = (ox0 + ox1) / 2;
+          const cy = (oy0 + oy1) / 2;
+          const lz = terrainTopZ + objMeta.light.offsetZ;
+          pendingLights.push({
+            x: cx, y: cy, z: lz,
+            intensity: objMeta.light.intensity,
+            color: objMeta.light.color,
+          });
         }
       }
     }

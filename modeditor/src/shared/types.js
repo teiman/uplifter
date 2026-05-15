@@ -64,43 +64,66 @@ const DEFAULT_SUN = {
   sunlight2Color: '180 210 255',
 };
 
-/** Texture mapping: Uplifter palette symbols → WAD texture names.
- *  Single source of truth, read by both the editor (preview) and the
- *  mapWriter. */
-const TEXTURES = {
-  tierra:           'dirt',
-  arena:            'sand',
-  agua:             '*water',
-  'road-up':        'road_up',
-  'road-down-left': 'road_left',
-  'road-x':         'roadx',
-  metal:            'metal1_1',
-  plaza:            'cement1',
-};
-
 /** Internal textures used by the writer for the world box, not exposed
  *  in the palette. */
 const SKY_TEXTURE = 'sky_auto';
 const WATER_TEXTURE = '*water';
 const BEDROCK_TEXTURE = 'dirt';
 
-/** Ordered list of palette entries for the UI. */
+/** Derive the 5 Quake texture names for a biome (top/side/capital/base/
+ *  bottom). Hyphens become underscores (Quake doesn't allow `-`). */
+function texturesFor(id) {
+  const s = id.replace(/-/g, '_');
+  return {
+    top:     `${s}_top`,
+    side:    `${s}_side`,
+    capital: `${s}_capital`,
+    base:    `${s}_base`,
+    bottom:  `${s}_bottom`,
+  };
+}
+
+/** Face keys in canonical order. */
+const FACE_KEYS = ['top', 'side', 'capital', 'base', 'bottom'];
+
+/** Per-cube face textures from position in a vertical column. See
+ *  column.md for the model and types.mjs for the doc comment. */
+function pickFaceTextures(k, total, neighborMax, biomeTex) {
+  const isTopCube    = k === total - 1;
+  const isBottomCube = k === 0;
+  const buried       = k < neighborMax;
+
+  let sideKey;
+  if (isTopCube)               sideKey = 'capital';
+  else if (buried)             sideKey = 'side';
+  else if (k === neighborMax)  sideKey = 'base';
+  else                         sideKey = 'side';
+
+  return {
+    top:    isTopCube    ? biomeTex.top    : null,
+    side:   biomeTex[sideKey],
+    bottom: isBottomCube ? biomeTex.bottom : null,
+  };
+}
+
+/** Ordered list of palette entries for the UI. Each entry carries its
+ *  5-face Quake texture set (`tex`); see column.md for the layout. */
 const PALETTE = [
-  { id: 'tierra',           label: 'Tierra',        tex: TEXTURES.tierra,            color: '#7a5a3a' },
-  { id: 'arena',            label: 'Arena',         tex: TEXTURES.arena,             color: '#d9c47a' },
-  { id: 'road-up',          label: 'Road ↑',        tex: TEXTURES['road-up'],        color: '#444444' },
-  { id: 'road-down-left',   label: 'Road ↙',        tex: TEXTURES['road-down-left'], color: '#555555' },
-  { id: 'road-x',           label: 'Road ✕',        tex: TEXTURES['road-x'],         color: '#3a3a3a' },
-  { id: 'metal',            label: 'Metal',         tex: TEXTURES.metal,             color: '#6b6b78' },
-  { id: 'plaza',            label: 'Plaza',         tex: TEXTURES.plaza,             color: '#a8a89a' },
+  { id: 'tierra',           label: 'Tierra',        tex: texturesFor('tierra'),         color: '#7a5a3a' },
+  { id: 'arena',            label: 'Arena',         tex: texturesFor('arena'),          color: '#d9c47a' },
+  { id: 'road-up',          label: 'Road ↑',        tex: texturesFor('road-up'),        color: '#444444' },
+  { id: 'road-down-left',   label: 'Road ↙',        tex: texturesFor('road-down-left'), color: '#555555' },
+  { id: 'road-x',           label: 'Road ✕',        tex: texturesFor('road-x'),         color: '#3a3a3a' },
+  { id: 'metal',            label: 'Metal',         tex: texturesFor('metal'),          color: '#6b6b78' },
+  { id: 'plaza',            label: 'Plaza',         tex: texturesFor('plaza'),          color: '#a8a89a' },
 ];
 
 /** Special objects placed in a cell. See types.mjs for the field spec. */
 const SPECIAL_OBJECTS = [
   { kind: 'casa',        label: 'Casa',        glyph: '⌂', color: '#c08c4a',
-    footprint: 1 },
+    footprint: 1, isBuilding: true, tex: texturesFor('casa') },
   { kind: 'rascacielos', label: 'Rascacielos', glyph: '▮', color: '#8888a0',
-    footprint: 1 },
+    footprint: 1, isBuilding: true, tex: texturesFor('rascacielos') },
   { kind: 'lampara',     label: 'Lámpara',     glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
@@ -112,11 +135,6 @@ const SPECIAL_OBJECTS = [
     heightU: 48, footprint: 0.5, tex: 'dirt' },
 ];
 const OBJECT_BY_KIND = new Map(SPECIAL_OBJECTS.map(o => [o.kind, o]));
-
-/** Building textures (atlasmapper convention). */
-const ROOF_METAL  = 'iktkfl03';
-const WALL_GROUND = 'front';
-const WALL_UPPER  = 'building';
 
 const HOUSE_STOREYS_MIN = 2;
 const HOUSE_STOREYS_MAX = 4;
@@ -213,17 +231,16 @@ module.exports = {
   SKY_TOP_Z,
   SKY_WALL_THICKNESS,
   DEFAULT_SUN,
-  TEXTURES,
   SKY_TEXTURE,
   WATER_TEXTURE,
   BEDROCK_TEXTURE,
+  FACE_KEYS,
+  texturesFor,
+  pickFaceTextures,
   PALETTE,
   SPECIAL_OBJECTS,
   OBJECT_BY_KIND,
   SMOOTHING_KINDS,
-  ROOF_METAL,
-  WALL_GROUND,
-  WALL_UPPER,
   HOUSE_STOREYS_MIN,
   HOUSE_STOREYS_MAX,
   makeEmptyTilemap,

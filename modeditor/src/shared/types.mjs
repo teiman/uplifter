@@ -65,20 +65,67 @@ export const DEFAULT_SUN = {
   sunlight2Color: '180 210 255',
 };
 
-export const TEXTURES = {
-  tierra: 'dirt',
-  arena: 'sand',
-  agua: '*water',
-  'road-up': 'road_up',
-  'road-down-left': 'road_left',
-  'road-x': 'roadx',
-  metal: 'metal1_1',
-  plaza: 'cement1',
-};
-
 export const SKY_TEXTURE = 'sky_auto';
 export const WATER_TEXTURE = '*water';
 export const BEDROCK_TEXTURE = 'dirt';
+
+/** Derive the 5 Quake texture names for a biome (top/side/capital/base/
+ *  bottom) from its id. Quake doesn't allow `-` in texture names, so
+ *  hyphens in the id are normalised to `_`. See column.md §Naming. */
+export function texturesFor(id) {
+  const s = id.replace(/-/g, '_');
+  return {
+    top:     `${s}_top`,
+    side:    `${s}_side`,
+    capital: `${s}_capital`,
+    base:    `${s}_base`,
+    bottom:  `${s}_bottom`,
+  };
+}
+
+/** Face keys in canonical order. Used when iterating per-face texture
+ *  sets (mapWriter brushes, 3D mesh per-face colours, etc.). */
+export const FACE_KEYS = ['top', 'side', 'capital', 'base', 'bottom'];
+
+/**
+ * Given a cube's position in a vertical column, return the texture
+ * names that go on its visible faces. See column.md for the model.
+ *
+ *   k            cube index inside the stack, 0 = bottom (against bedrock)
+ *   total        total cubes in the stack (height of the column in HEIGHT_UNIT)
+ *   neighborMax  height of the tallest adjacent terrain (in HEIGHT_UNIT).
+ *                The cube whose lower face sits at this Z is the one that
+ *                exposes the `base` face — cubes below it are buried by
+ *                neighbours and the engine will cull their lateral faces.
+ *   biomeTex     5-face texture set for THIS cube's biome (terreno for
+ *                terrain cubes, building tex for building cubes). The
+ *                caller is responsible for picking which biome each k
+ *                belongs to.
+ *
+ * Returns { top, side, bottom } — each a Quake texture name string, or
+ * null when the face is occluded by a same-column neighbour and the
+ * writer can skip emitting it.
+ *
+ * Conflict rule (single-cube columns, k=0 = k=total-1 = neighborMax):
+ *   capital wins on the laterals. This matches column.md "1 cube → capital".
+ */
+export function pickFaceTextures(k, total, neighborMax, biomeTex) {
+  const isTopCube    = k === total - 1;
+  const isBottomCube = k === 0;
+  const buried       = k < neighborMax;
+
+  let sideKey;
+  if (isTopCube)               sideKey = 'capital';
+  else if (buried)             sideKey = 'side';
+  else if (k === neighborMax)  sideKey = 'base';
+  else                         sideKey = 'side';
+
+  return {
+    top:    isTopCube    ? biomeTex.top    : null,
+    side:   biomeTex[sideKey],
+    bottom: isBottomCube ? biomeTex.bottom : null,
+  };
+}
 
 // 'agua' is intentionally not in this palette: water is a height
 // concept (submerged cell), not a paint surface. To submerge/raise
@@ -86,13 +133,13 @@ export const BEDROCK_TEXTURE = 'dirt';
 // still painted from this palette — the global water brush sits above
 // it.
 export const PALETTE = [
-  { id: 'tierra',           label: 'Tierra',        tex: TEXTURES.tierra,            color: '#7a5a3a' },
-  { id: 'arena',            label: 'Arena',         tex: TEXTURES.arena,             color: '#d9c47a' },
-  { id: 'road-up',          label: 'Road ↑',        tex: TEXTURES['road-up'],        color: '#444444' },
-  { id: 'road-down-left',   label: 'Road ↙',        tex: TEXTURES['road-down-left'], color: '#555555' },
-  { id: 'road-x',           label: 'Road ✕',        tex: TEXTURES['road-x'],         color: '#3a3a3a' },
-  { id: 'metal',            label: 'Metal',         tex: TEXTURES.metal,             color: '#6b6b78' },
-  { id: 'plaza',            label: 'Plaza',         tex: TEXTURES.plaza,             color: '#a8a89a' },
+  { id: 'tierra',           label: 'Tierra',        tex: texturesFor('tierra'),         color: '#7a5a3a' },
+  { id: 'arena',            label: 'Arena',         tex: texturesFor('arena'),          color: '#d9c47a' },
+  { id: 'road-up',          label: 'Road ↑',        tex: texturesFor('road-up'),        color: '#444444' },
+  { id: 'road-down-left',   label: 'Road ↙',        tex: texturesFor('road-down-left'), color: '#555555' },
+  { id: 'road-x',           label: 'Road ✕',        tex: texturesFor('road-x'),         color: '#3a3a3a' },
+  { id: 'metal',            label: 'Metal',         tex: texturesFor('metal'),          color: '#6b6b78' },
+  { id: 'plaza',            label: 'Plaza',         tex: texturesFor('plaza'),          color: '#a8a89a' },
 ];
 
 /**
@@ -100,20 +147,24 @@ export const PALETTE = [
  *   - kind/label/glyph: identity for the UI palette.
  *   - color: 2D tint and 3D mesh fallback.
  *   - heightU: total height in Quake units above the cell's terrain top
- *              (when the object is a single brush — buildings use multi-
- *              storey emission and ignore heightU; see mapWriter).
+ *              (single-brush decorative objects only — buildings use
+ *              storey-based emission, see mapWriter).
  *   - footprint: 0..1, fraction of the cell (in X/Y) the object occupies.
  *                1 for buildings (so contiguous buildings fuse into blocks);
  *                narrower (~0.5) for trees/rocks; tiny (~0.18) for lamps.
- *   - tex: bare texture name (single-brush objects). Buildings use the
- *          dedicated BUILDING_* constants instead — see mapWriter.
+ *   - isBuilding: true → object is rendered as a column stack using the
+ *                 5-face texture set (top/side/capital/base/bottom) from
+ *                 its own `tex`. false/absent → object is a single brush
+ *                 with a flat `tex` string.
+ *   - tex: for decorative objects, a single Quake texture name (string).
+ *          For buildings, the 5-face texture set (object) from texturesFor().
  *   - light: optional point light spec emitted with the brush.
  */
 export const SPECIAL_OBJECTS = [
   { kind: 'casa',        label: 'Casa',        glyph: '⌂', color: '#c08c4a',
-    footprint: 1 },
+    footprint: 1, isBuilding: true, tex: texturesFor('casa') },
   { kind: 'rascacielos', label: 'Rascacielos', glyph: '▮', color: '#8888a0',
-    footprint: 1 },
+    footprint: 1, isBuilding: true, tex: texturesFor('rascacielos') },
   { kind: 'lampara',     label: 'Lámpara',     glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
@@ -124,15 +175,6 @@ export const SPECIAL_OBJECTS = [
   { kind: 'roca',        label: 'Roca',        glyph: '◆', color: '#7a7a7a',
     heightU: 48, footprint: 0.5, tex: 'dirt' },
 ];
-
-/** Building texture identifiers (atlasmapper convention).
- *  ROOF_METAL: top face (and bottom). Originally `iktkfl03` in text.wad;
- *  kept as the canonical roof texture under a semantic alias.
- *  WALL_GROUND: sides of the ground-floor storey (storefronts).
- *  WALL_UPPER:  sides of every storey above the ground floor. */
-export const ROOF_METAL  = 'iktkfl03';
-export const WALL_GROUND = 'front';
-export const WALL_UPPER  = 'building';
 
 /** Random storeys per house cluster — atlasmapper uses 2..4 inclusive. */
 export const HOUSE_STOREYS_MIN = 2;
