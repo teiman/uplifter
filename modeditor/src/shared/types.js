@@ -125,31 +125,32 @@ function pickFaceTextures(k, total, neighborMax, biomeTex) {
 
 /** Ordered list of palette entries for the UI. Each entry carries its
  *  5-face Quake texture set (`tex`); see column.md for the layout. */
+// Labels match the biome id / asset folder name. See types.mjs.
 const PALETTE = [
-  { id: 'tierra',  label: 'Tierra', tex: texturesFor('tierra'),  color: '#7a5a3a' },
-  { id: 'arena',   label: 'Arena',  tex: texturesFor('arena'),   color: '#d9c47a' },
-  { id: 'road-up', label: 'Road ↑', tex: texturesFor('road-up'), color: '#444444' },
-  { id: 'road-dl', label: 'Road ↙', tex: texturesFor('road-dl'), color: '#555555' },
-  { id: 'road-x',  label: 'Road ✕', tex: texturesFor('road-x'),  color: '#3a3a3a' },
-  { id: 'metal',   label: 'Metal',  tex: texturesFor('metal'),   color: '#6b6b78' },
-  { id: 'plaza',   label: 'Plaza',  tex: texturesFor('plaza'),   color: '#a8a89a' },
+  { id: 'tierra',  label: 'tierra',  tex: texturesFor('tierra'),  color: '#7a5a3a' },
+  { id: 'arena',   label: 'arena',   tex: texturesFor('arena'),   color: '#d9c47a' },
+  { id: 'road-up', label: 'road-up', tex: texturesFor('road-up'), color: '#444444' },
+  { id: 'road-dl', label: 'road-dl', tex: texturesFor('road-dl'), color: '#555555' },
+  { id: 'road-x',  label: 'road-x',  tex: texturesFor('road-x'),  color: '#3a3a3a' },
+  { id: 'metal',   label: 'metal',   tex: texturesFor('metal'),   color: '#6b6b78' },
+  { id: 'plaza',   label: 'plaza',   tex: texturesFor('plaza'),   color: '#a8a89a' },
 ];
 
 /** Special objects placed in a cell. See types.mjs for the field spec. */
 const SPECIAL_OBJECTS = [
-  { kind: 'casa',  label: 'Casa',        glyph: '⌂', color: '#c08c4a',
+  { kind: 'casa',    label: 'casa',    glyph: '⌂', color: '#c08c4a',
     footprint: 1, isBuilding: true, tex: texturesFor('casa') },
-  { kind: 'tower', label: 'Rascacielos', glyph: '▮', color: '#8888a0',
+  { kind: 'tower',   label: 'tower',   glyph: '▮', color: '#8888a0',
     footprint: 1, isBuilding: true, tex: texturesFor('tower') },
-  { kind: 'lampara',     label: 'Lámpara',     glyph: '✦', color: '#f0d870',
+  { kind: 'lampara', label: 'lampara', glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
   // Reference procedural textures generated into auto.wad on launch.
-  { kind: 'arbol',       label: 'Árbol',       glyph: '♣', color: '#3a8030',
+  { kind: 'arbol',   label: 'arbol',   glyph: '♣', color: '#3a8030',
     heightU: 192, footprint: 0.5, tex: '+0wood' },
-  { kind: 'arbusto',     label: 'Arbusto',     glyph: '♠', color: '#4a7040',
+  { kind: 'arbusto', label: 'arbusto', glyph: '♠', color: '#4a7040',
     heightU: 32, footprint: 0.6, tex: 'gren3a' },
-  { kind: 'roca',        label: 'Roca',        glyph: '◆', color: '#7a7a7a',
+  { kind: 'roca',    label: 'roca',    glyph: '◆', color: '#7a7a7a',
     heightU: 48, footprint: 0.5, tex: 'rock1_2' },
 ];
 const OBJECT_BY_KIND = new Map(SPECIAL_OBJECTS.map(o => [o.kind, o]));
