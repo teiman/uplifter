@@ -84,6 +84,9 @@ export function RightPanel() {
         <FormGroup label="Intensidad">
           <NumberField value={sun.intensity} min={0} onCommit={(n) => setSun({ intensity: n })} />
         </FormGroup>
+        <FormGroup label="Min-light" helperText="Mínimo de iluminación; 0 desactiva.">
+          <NumberField value={sun.minlight ?? 0} min={0} onCommit={(n) => setSun({ minlight: n })} />
+        </FormGroup>
       </div>
 
       <div className="panel">

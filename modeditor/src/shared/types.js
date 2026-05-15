@@ -62,6 +62,8 @@ const DEFAULT_SUN = {
   penumbra: 3,
   sunlight2: 80,
   sunlight2Color: '180 210 255',
+  // Lightmap floor — see types.mjs.
+  minlight: 110,
 };
 
 /** Internal textures used by the writer for the world box, not exposed
@@ -248,6 +250,9 @@ function deserialiseTilemap(o) {
     textures: Int8Array.from(o.textures),
     heights: Int16Array.from(o.heights),
     objects: migrateObjects(o.objects),
+    // Merge so newly-added sun keys (e.g. minlight) pick up their
+    // default when the map was saved before the field existed.
+    sun: { ...DEFAULT_SUN, ...(o.sun ?? {}) },
   };
 }
 

@@ -63,6 +63,9 @@ export const DEFAULT_SUN = {
   penumbra: 3,
   sunlight2: 80,
   sunlight2Color: '180 210 255',
+  // Floor for the lightmap: shaded faces never drop below this value.
+  // Keeps interior shadows readable on outdoor maps. 0 disables it.
+  minlight: 110,
 };
 
 export const SKY_TEXTURE = 'sky_auto';
@@ -300,7 +303,9 @@ export function deserialiseTilemap(o) {
     smoothing: o.smoothing ?? new Array(N).fill(null),
     patrols:   o.patrols   ?? [],
     spawn:     o.spawn     ?? null,
-    sun:       o.sun       ?? { ...DEFAULT_SUN },
+    // Merge so newly-added sun keys (e.g. minlight) pick up their
+    // default on maps saved before the field existed.
+    sun:       { ...DEFAULT_SUN, ...(o.sun ?? {}) },
     quality:   o.quality   ?? 'fast',
     // Fill in defaults on saved areas that predate the `strict` flag,
     // so loading an old map gives you the new default (strict ON).

@@ -126,6 +126,9 @@ function buildMapText({ tilemap, wadKey }) {
   out.push(`"_sunlight_penumbra" "${sun.penumbra}"`);
   if (sun.sunlight2) out.push(`"_sunlight2" "${sun.sunlight2}"`);
   if (sun.sunlight2Color) out.push(`"_sunlight_color2" "${sun.sunlight2Color}"`);
+  // _minlight clamps the lightmap floor — keeps interior shadows
+  // readable. Skipped when 0 so 'off' doesn't add the key at all.
+  if (sun.minlight) out.push(`"_minlight" "${sun.minlight}"`);
   out.push('"_dirt" "1"');
 
   // ---------- sky box ----------
