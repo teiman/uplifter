@@ -16,7 +16,7 @@ const state = {
   tilemap: makeEmptyTilemap(),
   selectedBrushIdx: 0,       // index into BRUSH_PALETTE
   mode: 'paint',             // 'paint' | 'height' | 'area' | '3d'
-  tool: 'paint',             // when mode='paint':  'paint' | 'rect'
+  tool: 'paint',             // when mode='paint':  'paint' | 'rect' | 'bucket'
                              // when mode='height': 'raise'|'lower'|'smooth'|'extend'|'rect'
                              // when mode='area':   always 'area' (no sub-tools)
                              // when mode='3d':     'perspective' | 'iso'
@@ -419,6 +419,55 @@ export function fillRect(c0, r0, c1, r1) {
   for (let row = rMin; row <= rMax; row++) {
     for (let col = cMin; col <= cMax; col++) {
       if (applyPaintAtCell(col, row, { toggleObject: false })) anyChanged = true;
+    }
+  }
+  if (anyChanged) notify();
+  return anyChanged;
+}
+
+/**
+ * Bucket-fill: paint every cell 4-connected to (col, row) that shares
+ * its current height AND texture index with the start cell. Submerged
+ * starts are rejected (you can't bucket-fill ocean — use Altura tools
+ * to raise the land first). For non-texture brushes (object/spawn) we
+ * fall back to a single-cell apply so a click doesn't carpet half the
+ * map with houses.
+ */
+export function floodFillPaint(col, row) {
+  const t = state.tilemap;
+  if (col < 0 || col >= t.cols || row < 0 || row >= t.rows) return false;
+  const i0 = row * t.cols + col;
+  if (t.heights[i0] < SEA_LEVEL_H) return false;
+  const brush = BRUSH_PALETTE[state.selectedBrushIdx];
+  if (!brush || brush.type !== 'texture') {
+    // Object/spawn brushes bypass the flood — same behaviour as a
+    // regular single-cell paint.
+    return applyToolAtCell(col, row);
+  }
+  const cols = t.cols;
+  const rows = t.rows;
+  const origH = t.heights[i0];
+  const origT = t.textures[i0];
+  const visited = new Uint8Array(cols * rows);
+  const stack = [i0];
+  visited[i0] = 1;
+  let anyChanged = false;
+  while (stack.length > 0) {
+    const i = stack.pop();
+    const cc = i % cols;
+    const cr = (i - cc) / cols;
+    if (applyPaintAtCell(cc, cr, { toggleObject: false })) anyChanged = true;
+    const neighbours = [i - 1, i + 1, i - cols, i + cols];
+    const nCols = [cc - 1, cc + 1, cc, cc];
+    const nRows = [cr, cr, cr - 1, cr + 1];
+    for (let k = 0; k < 4; k++) {
+      const nc = nCols[k], nr = nRows[k];
+      if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
+      const ni = neighbours[k];
+      if (visited[ni]) continue;
+      if (t.heights[ni] !== origH || t.textures[ni] !== origT) continue;
+      visited[ni] = 1;
+      stack.push(ni);
     }
   }
   if (anyChanged) notify();

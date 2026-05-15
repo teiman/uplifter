@@ -24,8 +24,9 @@ const MODE_TABS = [
 
 // --- paint sub-tools (shown in the Pintar ribbon) ---
 const PAINT_TOOLS = [
-  { id: 'paint', label: 'Pintar',     icon: 'tint' },
-  { id: 'rect',  label: 'Rectángulo', icon: 'widget' },
+  { id: 'paint',  label: 'Pintar',     icon: 'tint' },
+  { id: 'rect',   label: 'Rectángulo', icon: 'widget' },
+  { id: 'bucket', label: 'Bote',       icon: 'style' },
 ];
 
 // --- height sub-tools (shown in the Altura ribbon) ---
@@ -149,6 +150,8 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
             <span className="ribbon-hint">
               {tool === 'rect'
                 ? 'Arrastra para definir el rectángulo; al soltar se rellena con la textura/objeto seleccionado.'
+                : tool === 'bucket'
+                ? 'Click en una celda: rellena todas las contiguas con la misma altura y textura usando la textura seleccionada.'
                 : 'Selecciona una textura u objeto de la paleta y pinta con click izquierdo.'}
             </span>
           </>

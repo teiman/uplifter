@@ -15,6 +15,7 @@ import {
   getRectTargetH,
   fillRect,
   fillRectHeight,
+  floodFillPaint,
   setPlayArea,
   clearPlayArea,
   takePendingFocusCell,
@@ -559,6 +560,15 @@ export function Canvas2D() {
       return;
     }
     if (e.button !== 0) return;
+    if (getTool() === 'bucket') {
+      // One-shot flood fill: pinta toda la región 4-connected que
+      // comparte altura y textura con la celda bajo el cursor. No hay
+      // drag — un único click sirve.
+      const { col, row } = cellFromEvent(e);
+      floodFillPaint(col, row);
+      endStroke();
+      return;
+    }
     if (getTool() === 'rect') {
       // Rect-fill sub-tool — works in both paint and height modes.
       // The rect lives in cell-coords and is drawn as an overlay every
