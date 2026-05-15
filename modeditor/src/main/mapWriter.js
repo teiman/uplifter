@@ -64,10 +64,16 @@ function biomeTexForPaletteIdx(idx) {
  * @param {Object} args
  * @param {object} args.tilemap
  * @param {string} args.wadKey   semicolon-separated WAD paths for worldspawn "wad"
- * @returns {{text:string, warnings:string[]}}
+ * @returns {{text:string, warnings:string[], info:string[]}}
+ *   - warnings  things that may make the map look wrong (missing
+ *               textures, pure-ocean output, …)
+ *   - info      neutral progress/optimisation stats (brush counts,
+ *               cell counts, etc.) — separated so the compile-log
+ *               viewer doesn't flag them as WARNING.
  */
 function buildMapText({ tilemap, wadKey }) {
   const warnings = [];
+  const info = [];
   const { cols, rows, cellSize, textures, heights, sun } = tilemap;
 
   // Grid is centred on the world origin. The grid spans gridHalf on each axis;
@@ -201,6 +207,23 @@ function buildMapText({ tilemap, wadKey }) {
   // global water brush, and skyscrapers reaching the sky) stay in
   // worldspawn.
   const detailBrushes = [];
+  // Counters for the compile-log summary. runsBeforeMesh totals every
+  // vertical run produced by optimisation A; bucketRuns is the subset
+  // that entered the greedy-mesh pass (opt-B). The greedy pass collapses
+  // those into meshBrushes, so opt-B saved (bucketRuns − meshBrushes)
+  // brushes on top of opt-A.
+  let runsBeforeMesh = 0;
+  let bucketRuns = 0;
+  // Optimisation B (greedy mesh 2D). Each vertical run that fills its
+  // cell footprint goes into a bucket keyed by its texture/Z signature.
+  // After the cell loop we walk each bucket and emit one brush per
+  // maximal rectangle of cells contributing to it. Building runs with
+  // an inset and sealing runs (skyscraper top) skip this — they go
+  // straight to detailBrushes / worldspawn.
+  //
+  // bucket.cellMask is a Uint8Array(cols*rows): 1 if the cell at
+  // (col,row) is unclaimed and contributes this signature.
+  const meshBuckets = new Map();
   // Collected light entities from object placements (e.g. lamps). Emitted
   // after worldspawn so they live in their own `{ classname light }` blocks.
   const pendingLights = [];
@@ -295,23 +318,49 @@ function buildMapText({ tilemap, wadKey }) {
       // sideTex AND the boundary between them is occluded (top of the
       // earlier cube + bottom of the later cube are both hidden by
       // the contact). Cuts a typical column of 12 cubes down to 2–4
-      // brushes: SEAL + (BASE) + SIDE-RUN + CAPITAL/TOP. The
+      // runs: SEAL + (BASE) + SIDE-RUN + CAPITAL/TOP. The
       // skyscraper top cube is always its own run because it goes to
       // worldspawn (sealing) while everything else goes to func_detail.
+      //
+      // Runs that fill the cell footprint (i.e. terrain, or buildings
+      // with footprint=1) are buffered into meshBuckets so the greedy
+      // 2D pass at the end can merge identical runs across adjacent
+      // cells. Sealing runs and inset-building runs sidestep the mesh
+      // and emit immediately.
       let run = null;
       function emitRun(r) {
         if (!r) return;
-        const sideTex   = r.sideTex;
-        const topTex    = r.topTex    ?? sideTex;
-        const bottomTex = r.bottomTex ?? sideTex;
-        const brush = boxBrush(
-          { minX: r.x0, maxX: r.x1, minY: r.y0, maxY: r.y1,
-            minZ: r.minZ, maxZ: r.maxZ },
-          sideTex,
-          { topTex, sideTex, bottomTex },
-        );
-        if (r.sealing) out.push(brush);
-        else           detailBrushes.push(brush);
+        runsBeforeMesh++;
+        const fillsCell = r.x0 === x0 && r.x1 === x1
+                       && r.y0 === y0 && r.y1 === y1;
+        if (r.sealing || !fillsCell) {
+          const sideTex   = r.sideTex;
+          const topTex    = r.topTex    ?? sideTex;
+          const bottomTex = r.bottomTex ?? sideTex;
+          const brush = boxBrush(
+            { minX: r.x0, maxX: r.x1, minY: r.y0, maxY: r.y1,
+              minZ: r.minZ, maxZ: r.maxZ },
+            sideTex,
+            { topTex, sideTex, bottomTex },
+          );
+          if (r.sealing) out.push(brush);
+          else           detailBrushes.push(brush);
+          return;
+        }
+        // Cell-filling, non-sealing → defer to the greedy pass.
+        bucketRuns++;
+        const key = `${r.minZ}|${r.maxZ}|${r.sideTex}|${r.topTex ?? ''}|${r.bottomTex ?? ''}`;
+        let bucket = meshBuckets.get(key);
+        if (!bucket) {
+          bucket = {
+            minZ: r.minZ, maxZ: r.maxZ,
+            sideTex: r.sideTex,
+            topTex: r.topTex, bottomTex: r.bottomTex,
+            cellMask: new Uint8Array(cols * rows),
+          };
+          meshBuckets.set(key, bucket);
+        }
+        bucket.cellMask[row * cols + col] = 1;
       }
       for (let k = 0; k < total; k++) {
         const isTerrainCube = k < terrainCubes;
@@ -393,11 +442,64 @@ function buildMapText({ tilemap, wadKey }) {
   if (landCount === 0) {
     warnings.push('no land cells emerged — map is pure ocean');
   }
-  // Brush count summary — visible in the compile log so we can tell at
-  // a glance how much the vertical-run merger saved. Each emerged cell
-  // would otherwise emit (SEAL_CUBES + h + storeys) individual cubes,
-  // which is what the optimiser collapses into runs.
-  warnings.push(`emitted ${landCount} cells → ${detailBrushes.length} func_detail brushes`);
+
+  // ---------- Optimisation B: greedy 2D rectangle pass ----------
+  // For each bucket of runs that share an exact texture/Z signature,
+  // walk the cell mask and emit one brush per maximal rectangle of
+  // contributing cells. Cells get cleared as they're consumed so each
+  // is covered by exactly one rect.
+  //
+  // The mesh runs across the whole tilemap regardless of playArea
+  // because the inArea filter already excluded outside cells from
+  // contributing to the masks during the main loop.
+  let meshBrushes = 0;
+  for (const bucket of meshBuckets.values()) {
+    const { minZ, maxZ, sideTex, topTex, bottomTex, cellMask } = bucket;
+    const tEx = topTex    ?? sideTex;
+    const bEx = bottomTex ?? sideTex;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (!cellMask[r * cols + c]) continue;
+        // Grow right as far as the mask stays set on this row.
+        let c1 = c;
+        while (c1 + 1 < cols && cellMask[r * cols + (c1 + 1)]) c1++;
+        // Grow down as far as the rows c..c1 stay fully covered.
+        let r1 = r;
+        outer: while (r1 + 1 < rows) {
+          for (let cc = c; cc <= c1; cc++) {
+            if (!cellMask[(r1 + 1) * cols + cc]) break outer;
+          }
+          r1++;
+        }
+        // Convert cell rectangle to world AABB. Row 0 is the NORTH
+        // edge so the rows flip in Y just like the per-cell case.
+        const rx0 = -gridHalfX + c * cellSize;
+        const rx1 = -gridHalfX + (c1 + 1) * cellSize;
+        const ySouthLow  = (rows - 1) - r1;
+        const ySouthHigh = (rows - 1) - r;
+        const ry0 = -gridHalfY + ySouthLow * cellSize;
+        const ry1 = -gridHalfY + (ySouthHigh + 1) * cellSize;
+        detailBrushes.push(boxBrush(
+          { minX: rx0, maxX: rx1, minY: ry0, maxY: ry1,
+            minZ, maxZ },
+          sideTex,
+          { topTex: tEx, sideTex, bottomTex: bEx },
+        ));
+        meshBrushes++;
+        // Clear all cells in this rectangle.
+        for (let rr = r; rr <= r1; rr++) {
+          for (let cc = c; cc <= c1; cc++) {
+            cellMask[rr * cols + cc] = 0;
+          }
+        }
+      }
+    }
+  }
+  const optBSaved = bucketRuns - meshBrushes;
+  info.push(`geometry: ${landCount} cells emerged`);
+  info.push(`opt-A (vertical merge): collapsed to ${runsBeforeMesh} runs`);
+  info.push(`opt-B (greedy mesh):    ${bucketRuns} runs → ${meshBrushes} rects (saved ${optBSaved})`);
+  info.push(`func_detail brushes:    ${detailBrushes.length}`);
 
   out.push('}');  // close worldspawn
 
@@ -465,7 +567,7 @@ function buildMapText({ tilemap, wadKey }) {
   out.push(`"angle" "${sa}"`);
   out.push('}');
 
-  return { text: out.join('\n') + '\n', warnings };
+  return { text: out.join('\n') + '\n', warnings, info };
 }
 
 /** Build the worldspawn `wad` value from absolute WAD paths. qbsp accepts

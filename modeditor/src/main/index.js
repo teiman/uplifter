@@ -76,9 +76,27 @@ async function refreshAutoWads(send) {
       path.join(TMP_DIR, 'textures.wad.manifest.json'),
     );
     if (r.rebuilt) {
-      const msg = `rebuilt textures.wad with ${r.count} miptexes`;
-      console.log(`[textures.wad] ${msg}`);
-      if (send) send({ stream: 'meta', tool: 'textures.wad', line: msg });
+      const header = `rebuilt textures.wad with ${r.count} miptexes`
+        + (r.reason ? ` (${r.reason})` : '');
+      console.log(`[textures.wad] ${header}`);
+      if (send) send({ stream: 'meta', tool: 'textures.wad', line: header });
+      // List the actual PNG changes so the user can see exactly which
+      // file edits triggered the rebuild. Capped per category to keep
+      // the log skimmable on bulk edits.
+      const cat = (label, list) => {
+        if (!list || list.length === 0) return;
+        const MAX = 8;
+        const head = list.slice(0, MAX).join(', ');
+        const tail = list.length > MAX ? ` (+${list.length - MAX} more)` : '';
+        const line = `  ${label}: ${head}${tail}`;
+        console.log(`[textures.wad] ${line}`);
+        if (send) send({ stream: 'meta', tool: 'textures.wad', line });
+      };
+      if (r.changes) {
+        cat('added',    r.changes.added);
+        cat('modified', r.changes.modified);
+        cat('removed',  r.changes.removed);
+      }
     }
   } catch (err) {
     console.error('[textures.wad]', err);
@@ -182,6 +200,9 @@ function registerIpc(getWindow) {
       const mapPath = path.join(TMP_DIR, `${basename}.map`);
       await fs.writeFile(mapPath, built.text, 'utf8');
       send({ stream: 'meta', tool: 'mapWriter', line: `wrote ${mapPath} (${built.text.length} bytes)` });
+      for (const m of built.info ?? []) {
+        send({ stream: 'meta', tool: 'mapWriter', line: m });
+      }
       for (const w of built.warnings) {
         send({ stream: 'meta', tool: 'mapWriter', line: `WARNING: ${w}` });
       }

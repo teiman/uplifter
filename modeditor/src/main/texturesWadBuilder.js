@@ -168,10 +168,40 @@ async function buildTexturesWad(scan, outWadPath) {
 }
 
 /**
+ * Diff two manifests' `files` maps. Returns {added, modified, removed}
+ * each as a sorted array of rel-paths. Used purely for log messages so
+ * the user can see which PNGs triggered the rebuild.
+ */
+function diffManifests(current, saved) {
+  const cur = current?.files ?? {};
+  const old = saved?.files ?? {};
+  const added = [];
+  const modified = [];
+  const removed = [];
+  for (const k of Object.keys(cur)) {
+    if (!(k in old)) added.push(k);
+    else if (cur[k] !== old[k]) modified.push(k);
+  }
+  for (const k of Object.keys(old)) {
+    if (!(k in cur)) removed.push(k);
+  }
+  added.sort(); modified.sort(); removed.sort();
+  return { added, modified, removed };
+}
+
+/**
  * Ensure `outWadPath` is up to date with the PNGs under `textureRoot`.
  * Reads `manifestPath`; if the recorded mtimes match the current ones
  * AND the WAD file exists, skips. Otherwise rebuilds the WAD and
- * writes the new manifest. Returns { rebuilt, count, path }.
+ * writes the new manifest.
+ *
+ * Return shape:
+ *   { rebuilt: false, count, path, reason? }                — no work needed
+ *   { rebuilt: true,  count, path, changes: { added,         — work done
+ *     modified, removed }, reason? }
+ *
+ * `reason` says WHY a rebuild ran when the file-level diff is empty
+ * (e.g. 'manifest version bump' or 'WAD missing').
  */
 async function ensureTexturesWad(textureRoot, outWadPath, manifestPath) {
   const scan = await scanTextures(textureRoot);
@@ -187,9 +217,14 @@ async function ensureTexturesWad(textureRoot, outWadPath, manifestPath) {
   if (wadExists && manifestsEqual(current, saved)) {
     return { rebuilt: false, count: scan.length, path: outWadPath };
   }
+  const changes = diffManifests(current, saved);
+  let reason = null;
+  if (!wadExists) reason = 'WAD file missing';
+  else if (!saved) reason = 'manifest missing';
+  else if (saved.version !== current.version) reason = `manifest schema bump (${saved.version} → ${current.version})`;
   await buildTexturesWad(scan, outWadPath);
   await fs.writeFile(manifestPath, JSON.stringify(current, null, 2), 'utf8');
-  return { rebuilt: true, count: scan.length, path: outWadPath };
+  return { rebuilt: true, count: scan.length, path: outWadPath, changes, reason };
 }
 
 module.exports = {
