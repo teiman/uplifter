@@ -290,42 +290,75 @@ function buildMapText({ tilemap, wadKey }) {
       const bx0 = x0 + inset, bx1 = x1 - inset;
       const by0 = y0 + inset, by1 = y1 - inset;
 
+      // Vertical run accumulator. Coalesces consecutive cubes of the
+      // column into a single taller brush when they share the same
+      // sideTex AND the boundary between them is occluded (top of the
+      // earlier cube + bottom of the later cube are both hidden by
+      // the contact). Cuts a typical column of 12 cubes down to 2–4
+      // brushes: SEAL + (BASE) + SIDE-RUN + CAPITAL/TOP. The
+      // skyscraper top cube is always its own run because it goes to
+      // worldspawn (sealing) while everything else goes to func_detail.
+      let run = null;
+      function emitRun(r) {
+        if (!r) return;
+        const sideTex   = r.sideTex;
+        const topTex    = r.topTex    ?? sideTex;
+        const bottomTex = r.bottomTex ?? sideTex;
+        const brush = boxBrush(
+          { minX: r.x0, maxX: r.x1, minY: r.y0, maxY: r.y1,
+            minZ: r.minZ, maxZ: r.maxZ },
+          sideTex,
+          { topTex, sideTex, bottomTex },
+        );
+        if (r.sealing) out.push(brush);
+        else           detailBrushes.push(brush);
+      }
       for (let k = 0; k < total; k++) {
         const isTerrainCube = k < terrainCubes;
         const biomeTex = isTerrainCube ? terrainBiomeTex : buildingBiomeTex;
         const faces = pickFaceTextures(k, total, neighborMaxK, biomeTex);
-        // Default occluded faces to side — keeps face data clean even
-        // if qbsp inspects the brush before culling.
-        const sideTex   = faces.side;
-        const topTex    = faces.top    ?? sideTex;
-        const bottomTex = faces.bottom ?? sideTex;
 
         const cubeMinZ = BEDROCK_TOP_Z + k * HEIGHT_UNIT;
-        // Skyscraper top cube extends to SKY_TOP_Z exactly so it seals
-        // the world ceiling.
         const isSkyscraperTop = isSkyscraper && (k === total - 1);
         const cubeMaxZ = isSkyscraperTop ? SKY_TOP_Z : cubeMinZ + HEIGHT_UNIT;
 
-        // Terrain cubes fill the full cell; building cubes use the
-        // building's footprint inset.
         const useBuildingFootprint = !isTerrainCube && inset > 0;
         const cx0 = useBuildingFootprint ? bx0 : x0;
         const cx1 = useBuildingFootprint ? bx1 : x1;
         const cy0 = useBuildingFootprint ? by0 : y0;
         const cy1 = useBuildingFootprint ? by1 : y1;
 
-        const brush = boxBrush(
-          { minX: cx0, maxX: cx1, minY: cy0, maxY: cy1,
-            minZ: cubeMinZ, maxZ: cubeMaxZ },
-          sideTex,
-          { topTex, sideTex, bottomTex },
-        );
-        // Skyscraper top cube seals the sky → worldspawn. Everything
-        // else (terrain, houses, lower skyscraper cubes) is non-sealing
-        // and goes into func_detail.
-        if (isSkyscraperTop) out.push(brush);
-        else                 detailBrushes.push(brush);
+        // Can we stretch the previous run to include this cube? Need
+        // matching footprint + same sideTex + the boundary between
+        // them must be hidden on both sides (run's top was null AND
+        // this cube's bottom is null), AND neither end is the special
+        // sky-sealing brush (those must stay alone so they reach
+        // worldspawn).
+        const canExtend = run
+          && run.x0 === cx0 && run.x1 === cx1
+          && run.y0 === cy0 && run.y1 === cy1
+          && run.sideTex === faces.side
+          && run.topTex === null
+          && faces.bottom === null
+          && !run.sealing
+          && !isSkyscraperTop;
+
+        if (canExtend) {
+          run.maxZ   = cubeMaxZ;
+          run.topTex = faces.top;
+        } else {
+          emitRun(run);
+          run = {
+            x0: cx0, x1: cx1, y0: cy0, y1: cy1,
+            minZ: cubeMinZ, maxZ: cubeMaxZ,
+            sideTex: faces.side,
+            topTex: faces.top,
+            bottomTex: faces.bottom,
+            sealing: isSkyscraperTop,
+          };
+        }
       }
+      emitRun(run);
       landCount++;
 
       // Small decorative objects (lamp, tree, bush, rock): single brush
@@ -360,6 +393,11 @@ function buildMapText({ tilemap, wadKey }) {
   if (landCount === 0) {
     warnings.push('no land cells emerged — map is pure ocean');
   }
+  // Brush count summary — visible in the compile log so we can tell at
+  // a glance how much the vertical-run merger saved. Each emerged cell
+  // would otherwise emit (SEAL_CUBES + h + storeys) individual cubes,
+  // which is what the optimiser collapses into runs.
+  warnings.push(`emitted ${landCount} cells → ${detailBrushes.length} func_detail brushes`);
 
   out.push('}');  // close worldspawn
 
