@@ -6,6 +6,7 @@ import {
   getMode, setMode,
   getTool, setTool,
   getHeightDelta, setHeightDelta,
+  getRectTargetH, setRectTargetH,
   resetMap,
   getTilemap,
   clearPlayArea, setPlayAreaRestrict, setPlayAreaStrict,
@@ -15,19 +16,25 @@ import { regionOfCell, REGION_GRID } from '../../shared/types.mjs';
 
 // --- top-level tabs (modes) ---
 const MODE_TABS = [
-  { id: 'paint',  label: 'Pintar',     icon: 'tint' },
-  { id: 'height', label: 'Altura',     icon: 'mountain' },
-  { id: 'rect',   label: 'Rectángulo', icon: 'widget' },
-  { id: 'area',   label: 'Área',       icon: 'selection' },
-  { id: '3d',     label: '3D',         icon: 'cube' },
+  { id: 'paint',  label: 'Pintar', icon: 'tint' },
+  { id: 'height', label: 'Altura', icon: 'mountain' },
+  { id: 'area',   label: 'Área',   icon: 'selection' },
+  { id: '3d',     label: '3D',     icon: 'cube' },
+];
+
+// --- paint sub-tools (shown in the Pintar ribbon) ---
+const PAINT_TOOLS = [
+  { id: 'paint', label: 'Pintar',     icon: 'tint' },
+  { id: 'rect',  label: 'Rectángulo', icon: 'widget' },
 ];
 
 // --- height sub-tools (shown in the Altura ribbon) ---
 const HEIGHT_TOOLS = [
-  { id: 'raise',  label: 'Subir',    icon: 'arrow-up' },
-  { id: 'lower',  label: 'Bajar',    icon: 'arrow-down' },
-  { id: 'smooth', label: 'Suavizar', icon: 'blur' },
-  { id: 'extend', label: 'Extender', icon: 'horizontal-distribution' },
+  { id: 'raise',  label: 'Subir',      icon: 'arrow-up' },
+  { id: 'lower',  label: 'Bajar',      icon: 'arrow-down' },
+  { id: 'smooth', label: 'Suavizar',   icon: 'blur' },
+  { id: 'extend', label: 'Extender',   icon: 'horizontal-distribution' },
+  { id: 'rect',   label: 'Rectángulo', icon: 'widget' },
 ];
 
 /** Quiet integer field used inside the ribbon. Same UX as RightPanel's
@@ -64,6 +71,7 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
   const mode = useStore(() => getMode());
   const tool = useStore(() => getTool());
   const heightDelta = useStore(() => getHeightDelta());
+  const rectTargetH = useStore(() => getRectTargetH());
   const tilemap = useStore(() => getTilemap());
 
   return (
@@ -125,7 +133,25 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
       {/* ----- Contextual ribbon: contents depend on the active tab ----- */}
       <div className="ribbon-context">
         {mode === 'paint' && (
-          <span className="ribbon-hint">Selecciona una textura u objeto de la paleta y pinta con click izquierdo.</span>
+          <>
+            <ButtonGroup>
+              {PAINT_TOOLS.map(t => (
+                <Button
+                  key={t.id}
+                  icon={t.icon}
+                  active={tool === t.id}
+                  onClick={() => setTool(t.id)}
+                >
+                  {t.label}
+                </Button>
+              ))}
+            </ButtonGroup>
+            <span className="ribbon-hint">
+              {tool === 'rect'
+                ? 'Arrastra para definir el rectángulo; al soltar se rellena con la textura/objeto seleccionado.'
+                : 'Selecciona una textura u objeto de la paleta y pinta con click izquierdo.'}
+            </span>
+          </>
         )}
 
         {mode === 'height' && (
@@ -142,17 +168,18 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
                 </Button>
               ))}
             </ButtonGroup>
-            {tool !== 'extend' && (
+            {tool === 'rect' ? (
+              <div className="ribbon-field">
+                <span className="ribbon-field-label">Altura</span>
+                <MiniNumber value={rectTargetH} onCommit={setRectTargetH} />
+              </div>
+            ) : tool !== 'extend' && (
               <div className="ribbon-field">
                 <span className="ribbon-field-label">Δ por clic</span>
                 <MiniNumber value={heightDelta} min={1} onCommit={setHeightDelta} />
               </div>
             )}
           </>
-        )}
-
-        {mode === 'rect' && (
-          <span className="ribbon-hint">Arrastra para definir un rectángulo; al soltar se rellena con la selección.</span>
         )}
 
         {mode === 'area' && (() => {

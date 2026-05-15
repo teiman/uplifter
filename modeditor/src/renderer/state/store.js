@@ -15,12 +15,17 @@ import {
 const state = {
   tilemap: makeEmptyTilemap(),
   selectedBrushIdx: 0,       // index into BRUSH_PALETTE
-  mode: 'paint',             // 'paint' | 'height' | 'rect' | 'area' | '3d'
-  tool: 'paint',             // when mode='paint': always 'paint'
-                             // when mode='height': 'raise'|'lower'|'smooth'|'extend'
-                             // when mode='rect':   always 'rect' (no sub-tools)
+  mode: 'paint',             // 'paint' | 'height' | 'area' | '3d'
+  tool: 'paint',             // when mode='paint':  'paint' | 'rect'
+                             // when mode='height': 'raise'|'lower'|'smooth'|'extend'|'rect'
                              // when mode='area':   always 'area' (no sub-tools)
                              // when mode='3d':     'perspective' | 'iso'
+                             //
+                             // 'rect' is a drag-rectangle sub-tool that
+                             // exists in both 2D editing modes: in paint
+                             // it fills the rect with the current brush;
+                             // in height it sets every cell in the rect
+                             // to rectTargetH.
                              //
                              // The 3D viewport is "just another mode": the
                              // view that renders the main canvas is derived
@@ -33,6 +38,10 @@ const state = {
   // stroke (the cell under the cursor); kept across the drag so each
   // dragged-over cell gets the same height.
   extendTargetH: null,
+  // Target height for the 'rect' tool in height mode. User-controlled
+  // via the ribbon input. Applied to every cell inside the dragged
+  // rectangle on mouseup.
+  rectTargetH: 1,
   // Iso view yaw index: 0..3, mapped to 45°, 135°, 225°, 315°. Lets
   // the user rotate the isometric camera in 90° steps while keeping
   // the same focus point. Persisted so re-entering the iso tool
@@ -126,6 +135,7 @@ export function getTool()           { return state.tool; }
  *  Everything that's not 3D is a 2D-editing mode. */
 export function getView()           { return state.mode === '3d' ? '3d' : '2d'; }
 export function getHeightDelta()    { return state.heightDelta; }
+export function getRectTargetH()    { return state.rectTargetH; }
 export function getIsoYawIdx()      { return state.isoYawIdx; }
 
 /** Rotate the iso camera by ±1 step (90° each). The view stays focused
@@ -142,15 +152,20 @@ export function setBrushIdx(idx) {
   notify();
 }
 
+const VALID_MODES = new Set(['paint', 'height', 'area', '3d']);
+
 /**
  * Switch the top-level mode. Resets the sub-tool to the mode's default:
- *   paint  → 'paint'
- *   height → 'raise'
- *   rect   → 'rect'
+ *   paint  → 'paint'   (sub-tools: 'paint', 'rect')
+ *   height → 'raise'   (sub-tools: 'raise', 'lower', 'smooth', 'extend', 'rect')
  *   area   → 'area'
- *   3d     → '3d'
+ *   3d     → 'iso'     (sub-tools: 'iso', 'perspective')
+ *
+ * Unknown modes are coerced to 'paint' so callers can't leave the
+ * editor in a state where no canvas handler picks up clicks.
  */
 export function setMode(mode) {
+  if (!VALID_MODES.has(mode)) mode = 'paint';
   if (state.mode === mode) return;
   const t = state.tilemap;
   const gridHalfX = (t.cols * CELL_SIZE) / 2;
@@ -177,10 +192,10 @@ export function setMode(mode) {
   }
   state.mode = mode;
   state.tool = (mode === 'paint')  ? 'paint'
-             : (mode === 'rect')   ? 'rect'
+             : (mode === 'height') ? 'raise'
              : (mode === 'area')   ? 'area'
              : (mode === '3d')     ? 'iso'
-             :                       'raise';
+             :                       'paint';
   notify();
 }
 
@@ -223,6 +238,11 @@ export function setTool(tool) {
 
 export function setHeightDelta(n) {
   state.heightDelta = n;
+  notify();
+}
+
+export function setRectTargetH(n) {
+  state.rectTargetH = n;
   notify();
 }
 
@@ -399,6 +419,36 @@ export function fillRect(c0, r0, c1, r1) {
   for (let row = rMin; row <= rMax; row++) {
     for (let col = cMin; col <= cMax; col++) {
       if (applyPaintAtCell(col, row, { toggleObject: false })) anyChanged = true;
+    }
+  }
+  if (anyChanged) notify();
+  return anyChanged;
+}
+
+/**
+ * Set every cell in the inclusive rectangle to height `targetH`.
+ * Submerging a cell strips its texture/object (consistent with the
+ * 'lower' and 'extend' tools). Used by the rect-fill drag in height
+ * mode.
+ */
+export function fillRectHeight(c0, r0, c1, r1, targetH) {
+  const t = state.tilemap;
+  const cMin = Math.max(0, Math.min(c0, c1));
+  const cMax = Math.min(t.cols - 1, Math.max(c0, c1));
+  const rMin = Math.max(0, Math.min(r0, r1));
+  const rMax = Math.min(t.rows - 1, Math.max(r0, r1));
+  let anyChanged = false;
+  for (let row = rMin; row <= rMax; row++) {
+    for (let col = cMin; col <= cMax; col++) {
+      const i = row * t.cols + col;
+      if (t.heights[i] === targetH) continue;
+      t.heights[i] = targetH;
+      if (targetH < SEA_LEVEL_H) {
+        t.textures[i] = -1;
+        t.objects[i] = null;
+      }
+      markChunkDirty(col, row);
+      anyChanged = true;
     }
   }
   if (anyChanged) notify();

@@ -10,7 +10,10 @@ import {
   applyToolAtCell,
   endStroke,
   getMode,
+  getTool,
+  getRectTargetH,
   fillRect,
+  fillRectHeight,
   setPlayArea,
   clearPlayArea,
   takePendingFocusCell,
@@ -539,9 +542,10 @@ export function Canvas2D() {
       return;
     }
     if (e.button !== 0) return;
-    if (getMode() === 'rect') {
-      // Start a rect-select drag. The rect lives in cell-coords and is
-      // drawn as an overlay every frame; the actual fill runs on mouseup.
+    if (getTool() === 'rect') {
+      // Rect-fill sub-tool — works in both paint and height modes.
+      // The rect lives in cell-coords and is drawn as an overlay every
+      // frame; the actual fill (paint or height) runs on mouseup.
       const { col, row } = cellFromEvent(e);
       dragRef.current.active = 'rect';
       dragRef.current.rectStart = { col, row };
@@ -631,7 +635,16 @@ export function Canvas2D() {
     if (dragRef.current.active === 'rect') {
       const a = dragRef.current.rectStart;
       const b = dragRef.current.rectEnd;
-      if (a && b) fillRect(a.col, a.row, b.col, b.row);
+      if (a && b) {
+        // The semantics of releasing the rect depend on the active
+        // mode: in paint we drop the current brush across the cells,
+        // in height we set them all to the user-defined target.
+        if (getMode() === 'height') {
+          fillRectHeight(a.col, a.row, b.col, b.row, getRectTargetH());
+        } else {
+          fillRect(a.col, a.row, b.col, b.row);
+        }
+      }
       dragRef.current.rectStart = null;
       dragRef.current.rectEnd = null;
     }
