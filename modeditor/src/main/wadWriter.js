@@ -539,6 +539,7 @@ async function ensureAutoWad(outPath) {
 module.exports = {
   writeWad,
   buildSolidMiptex,
+  allocMiptexLump,
   nearestPaletteIndex,
   ensureAutoWad,
 };

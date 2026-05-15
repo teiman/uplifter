@@ -24,6 +24,13 @@ const BIN_DIR = isDev
 const TMP_DIR = path.join(PROJECT_ROOT, 'tmp');
 const WADS_DIR = path.join(PROJECT_ROOT, 'wads');
 
+// PNG source for the auto-generated textures.wad. In dev the textures
+// live in the renderer's source tree (so Vite serves them to the
+// editor's 2D preview); in a packaged build they're inside app.asar,
+// which fs.readdir can still traverse — Electron ships fs with asar
+// support. Same path either way.
+const TEXTURES_SRC_DIR = path.join(PROJECT_ROOT, 'src', 'renderer', 'assets', 'textures');
+
 function ensureRuntimeDirs() {
   for (const dir of [TMP_DIR, WADS_DIR]) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch {}
@@ -36,5 +43,6 @@ module.exports = {
   BIN_DIR,
   TMP_DIR,
   WADS_DIR,
+  TEXTURES_SRC_DIR,
   ensureRuntimeDirs,
 };

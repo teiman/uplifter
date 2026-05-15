@@ -3,12 +3,13 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const { TMP_DIR, WADS_DIR, ensureRuntimeDirs } = require('./paths');
+const { TMP_DIR, WADS_DIR, TEXTURES_SRC_DIR, ensureRuntimeDirs } = require('./paths');
 const { compileMap } = require('./compileTools');
 const { deployBsp, DEFAULT_DESTINATION } = require('./deployBsp');
 const { buildMapText, wadKeyFromPaths } = require('./mapWriter');
 const { loadWad } = require('./wadLoader');
 const { ensureAutoWad } = require('./wadWriter');
+const { ensureTexturesWad } = require('./texturesWadBuilder');
 const { deserialiseTilemap } = require('../shared/types');
 
 // Note: don't read app.isPackaged here — depending on how Electron is
@@ -203,6 +204,21 @@ app.whenReady().then(async () => {
     await ensureAutoWad(path.join(WADS_DIR, 'auto.wad'));
   } catch (err) {
     console.error('[startup] auto.wad write failed:', err);
+  }
+  // Rebuild textures.wad if any PNG under assets/textures/<biome>/ has
+  // been added, removed, or modified since the last launch. Manifest of
+  // (rel path → mtimeMs) lives next to the WAD; if it matches the
+  // current scan AND the WAD file exists, we skip — typical startup is
+  // a no-op.
+  try {
+    const r = await ensureTexturesWad(
+      TEXTURES_SRC_DIR,
+      path.join(WADS_DIR, 'textures.wad'),
+      path.join(TMP_DIR, 'textures.wad.manifest.json'),
+    );
+    if (r.rebuilt) console.log(`[startup] rebuilt textures.wad with ${r.count} miptexes`);
+  } catch (err) {
+    console.error('[startup] textures.wad write failed:', err);
   }
   let mainWindow = createMainWindow();
   registerIpc(() => mainWindow);
