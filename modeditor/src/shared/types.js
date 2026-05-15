@@ -28,8 +28,9 @@ const WORLD_HALF = 16384;
  *  64×64 cells × 64u = 4096u square — generous for a starter scene,
  *  fast to paint and render in the 2D view. The designer can grow the
  *  grid later if a map needs more land. */
-const DEFAULT_COLS = 64;
-const DEFAULT_ROWS = 64;
+// See types.mjs for the rationale; keep in sync.
+const DEFAULT_COLS = 512;
+const DEFAULT_ROWS = 512;
 
 /** One height unit in Quake units. baseZ(h) = h * HEIGHT_UNIT. */
 const HEIGHT_UNIT = 64;
@@ -87,7 +88,6 @@ const BEDROCK_TEXTURE = 'dirt';
 const PALETTE = [
   { id: 'tierra',           label: 'Tierra',        tex: TEXTURES.tierra,            color: '#7a5a3a' },
   { id: 'arena',            label: 'Arena',         tex: TEXTURES.arena,             color: '#d9c47a' },
-  { id: 'agua',             label: 'Agua',          tex: TEXTURES.agua,              color: '#3a6da5' },
   { id: 'road-up',          label: 'Road ↑',        tex: TEXTURES['road-up'],        color: '#444444' },
   { id: 'road-down-left',   label: 'Road ↙',        tex: TEXTURES['road-down-left'], color: '#555555' },
   { id: 'road-x',           label: 'Road ✕',        tex: TEXTURES['road-x'],         color: '#3a3a3a' },

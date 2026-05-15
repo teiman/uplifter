@@ -6,9 +6,6 @@ import {
   getTilemap,
   setSun,
   setQuality,
-  getHeightDelta,
-  setHeightDelta,
-  getTool,
 } from '../state/store.js';
 
 /** Plain text input — no spinner buttons, no clamp pingers. */
@@ -77,22 +74,11 @@ function NumberField({ value, onCommit, min }) {
 
 export function RightPanel() {
   const tilemap = useStore(() => getTilemap());
-  const tool = useStore(() => getTool());
-  const heightDelta = useStore(() => getHeightDelta());
   const sun = tilemap.sun;
   const quality = tilemap.quality;
 
   return (
     <>
-      {(tool === 'raise' || tool === 'lower' || tool === 'smooth') && (
-        <div className="panel">
-          <div className="panel-title">Altura</div>
-          <FormGroup label="Δ por clic" labelInfo="(unidades)">
-            <NumberField value={heightDelta} min={1} onCommit={setHeightDelta} />
-          </FormGroup>
-        </div>
-      )}
-
       <div className="panel">
         <div className="panel-title">Luz solar</div>
         <FormGroup label="Intensidad">

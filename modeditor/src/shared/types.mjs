@@ -6,8 +6,47 @@
 export const SCHEMA_VERSION = 1;
 export const CELL_SIZE = 64;
 export const WORLD_HALF = 16384;
-export const DEFAULT_COLS = 64;
-export const DEFAULT_ROWS = 64;
+// 512×512 cells × 64u = 32768u square = the full playable world
+// (±16384 per axis). 262144 cells total — viable thanks to per-chunk
+// mesh caching in scene3d.js. The mapWriter and Canvas2D scale linearly
+// with painted cells, not grid size, so they stay fast.
+export const DEFAULT_COLS = 512;
+export const DEFAULT_ROWS = 512;
+
+/** 3D mesh chunk granularity. The scene is sliced into MESH_CHUNK_SIZE×
+ *  MESH_CHUNK_SIZE cell blocks; each block is its own VBO. Editing a
+ *  cell only invalidates its chunk, not the entire mesh. 32 keeps the
+ *  per-chunk vertex count small enough to upload in <1ms while keeping
+ *  the chunk grid (512/32 = 16²= 256 chunks) cheap to iterate. */
+export const MESH_CHUNK_SIZE = 32;
+
+/** Side length of the play-area region grid (REGION_GRID × REGION_GRID
+ *  regions tile the whole map). The user picks regions instead of
+ *  drawing arbitrary rectangles, so the count is fixed regardless of
+ *  map size. */
+export const REGION_GRID = 4;
+
+/** Cell bounds of region (rcol, rrow) given a map of cols×rows. Returns
+ *  an inclusive { c0, r0, c1, r1 } rectangle. The map size doesn't have
+ *  to divide evenly by REGION_GRID — we partition proportionally so
+ *  edge regions absorb the remainder. */
+export function regionBounds(cols, rows, rcol, rrow) {
+  const c0 = Math.floor(rcol * cols / REGION_GRID);
+  const c1 = Math.floor((rcol + 1) * cols / REGION_GRID) - 1;
+  const r0 = Math.floor(rrow * rows / REGION_GRID);
+  const r1 = Math.floor((rrow + 1) * rows / REGION_GRID) - 1;
+  return { c0, r0, c1, r1 };
+}
+
+/** Inverse of regionBounds: return the (rcol, rrow) the cell falls in.
+ *  Returns null for out-of-grid cells. Used to highlight the region a
+ *  given playArea matches in the mini-map. */
+export function regionOfCell(cols, rows, col, row) {
+  if (col < 0 || row < 0 || col >= cols || row >= rows) return null;
+  const rcol = Math.min(REGION_GRID - 1, Math.floor(col * REGION_GRID / cols));
+  const rrow = Math.min(REGION_GRID - 1, Math.floor(row * REGION_GRID / rows));
+  return { rcol, rrow };
+}
 export const HEIGHT_UNIT = 64;
 export const SEA_LEVEL_H = 0;
 export const SEA_LEVEL_Z = SEA_LEVEL_H * HEIGHT_UNIT;
@@ -41,13 +80,17 @@ export const SKY_TEXTURE = 'sky_auto';
 export const WATER_TEXTURE = '*water';
 export const BEDROCK_TEXTURE = 'dirt';
 
+// 'agua' is intentionally not in this palette: water is a height
+// concept (submerged cell), not a paint surface. To submerge/raise
+// land use the Altura tools. The visible texture on the sea floor is
+// still painted from this palette — the global water brush sits above
+// it.
 export const PALETTE = [
   { id: 'tierra',           label: 'Tierra',        tex: TEXTURES.tierra,            color: '#7a5a3a' },
   { id: 'arena',            label: 'Arena',         tex: TEXTURES.arena,             color: '#d9c47a' },
-  { id: 'agua',             label: 'Agua',          tex: TEXTURES.agua,              color: '#3a6da5' },
-  { id: 'road-up',          label: 'Road ↑',   tex: TEXTURES['road-up'],        color: '#444444' },
-  { id: 'road-down-left',   label: 'Road ↙',   tex: TEXTURES['road-down-left'], color: '#555555' },
-  { id: 'road-x',           label: 'Road ✕',   tex: TEXTURES['road-x'],         color: '#3a3a3a' },
+  { id: 'road-up',          label: 'Road ↑',        tex: TEXTURES['road-up'],        color: '#444444' },
+  { id: 'road-down-left',   label: 'Road ↙',        tex: TEXTURES['road-down-left'], color: '#555555' },
+  { id: 'road-x',           label: 'Road ✕',        tex: TEXTURES['road-x'],         color: '#3a3a3a' },
   { id: 'metal',            label: 'Metal',         tex: TEXTURES.metal,             color: '#6b6b78' },
   { id: 'plaza',            label: 'Plaza',         tex: TEXTURES.plaza,             color: '#a8a89a' },
 ];
@@ -101,16 +144,21 @@ export const SMOOTHING_KINDS = ['rampa', 'bevel', 'prisma'];
 
 /**
  * Unified palette item shape used by the LeftPanel and the 2D editor's
- * paint logic. Texturas and objetos coexist; only `type` differentiates
- * how applying it mutates the tilemap.
+ * paint logic. Texturas, objetos y el spawn coexisten; only `type`
+ * differentiates how applying it mutates the tilemap.
  *
- *   type: 'texture' | 'object'
+ *   type: 'texture' | 'object' | 'spawn'
  *   id:   palette key (texture id) or object kind
  *   label, color, glyph: visual
+ *
+ * Spawn is a singleton (there's only one info_player_start per map).
+ * Clicking on a cell with the spawn brush selected moves the spawn
+ * there; it doesn't paint anything per cell.
  */
 export const BRUSH_PALETTE = [
   ...PALETTE.map(p => ({ type: 'texture', id: p.id, label: p.label, color: p.color })),
   ...SPECIAL_OBJECTS.map(o => ({ type: 'object', id: o.kind, label: o.label, color: o.color, glyph: o.glyph })),
+  { type: 'spawn', id: 'spawn', label: 'Spawn', color: '#ff5050', glyph: '♟' },
 ];
 
 export function makeEmptyTilemap({ cols = DEFAULT_COLS, rows = DEFAULT_ROWS } = {}) {
@@ -128,6 +176,15 @@ export function makeEmptyTilemap({ cols = DEFAULT_COLS, rows = DEFAULT_ROWS } = 
     spawn: null,
     sun: { ...DEFAULT_SUN },
     quality: 'fast',
+    // Optional axis-aligned cell rectangle defining the playable zone.
+    //   null               → no area defined; whole map compiles.
+    //   { c0, r0, c1, r1, restrict }
+    //     c0..c1, r0..r1   → inclusive cell bounds (any order).
+    //     restrict         → when true, mapWriter only emits cells inside
+    //                        the area; when false, the area is drawn in
+    //                        the editor for reference but doesn't affect
+    //                        compilation.
+    playArea: null,
   };
 }
 
@@ -161,6 +218,11 @@ export function deserialiseTilemap(o) {
     spawn:     o.spawn     ?? null,
     sun:       o.sun       ?? { ...DEFAULT_SUN },
     quality:   o.quality   ?? 'fast',
+    // Fill in defaults on saved areas that predate the `strict` flag,
+    // so loading an old map gives you the new default (strict ON).
+    playArea: o.playArea
+      ? { ...o.playArea, strict: o.playArea.strict ?? true }
+      : null,
   };
 }
 
@@ -179,5 +241,6 @@ export function serialiseTilemap(t) {
     spawn: t.spawn,
     sun: t.sun,
     quality: t.quality,
+    playArea: t.playArea,
   };
 }

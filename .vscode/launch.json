@@ -7,13 +7,15 @@
       "request": "launch",
       "cwd": "${workspaceFolder}/modeditor",
       "command": "npm start",
+      "noDebug": true,
       "env": {
         "ELECTRON_RUN_AS_NODE": null
       },
       "presentation": {
         "reveal": "always",
         "panel": "new"
-      }
+      },
+      "internalConsoleOptions": "neverOpen"
     }
   ]
 }

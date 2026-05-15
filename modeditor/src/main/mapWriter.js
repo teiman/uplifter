@@ -71,9 +71,28 @@ function buildMapText({ tilemap, wadKey }) {
     );
   }
 
-  // World box. Sky walls/ceiling and bedrock are at ±WORLD_HALF, regardless of grid size.
-  const wmin = -WORLD_HALF;
-  const wmax =  WORLD_HALF;
+  // Play-area extraction (used both by the cell loop later AND by the
+  // world box below when strict mode shrinks the seal to the area).
+  const pa = tilemap.playArea;
+  const restrictArea = !!(pa && pa.restrict);
+  const strictArea   = !!(pa && pa.restrict && pa.strict);
+
+  // World box bounds in X/Y. By default they cover the full playable
+  // world (±WORLD_HALF). In strict-area mode they shrink to the area's
+  // cell rectangle — far fewer big faces for qbsp/vis to process.
+  let xMin, xMax, yMin, yMax;
+  if (strictArea) {
+    xMin = -gridHalfX +  pa.c0       * cellSize;
+    xMax = -gridHalfX + (pa.c1 + 1)  * cellSize;
+    // Rows flip: row 0 = +Y edge.
+    const yIdxSouthOfR1 = (rows - 1) - pa.r1;
+    const yIdxNorthOfR0 = (rows - 1) - pa.r0 + 1;
+    yMin = -gridHalfY + yIdxSouthOfR1 * cellSize;
+    yMax = -gridHalfY + yIdxNorthOfR0 * cellSize;
+  } else {
+    xMin = -WORLD_HALF; xMax = WORLD_HALF;
+    yMin = -WORLD_HALF; yMax = WORLD_HALF;
+  }
   const swt = SKY_WALL_THICKNESS;
 
   const out = [];
@@ -102,32 +121,32 @@ function buildMapText({ tilemap, wadKey }) {
 
   // West wall (-X).
   out.push(boxBrush(
-    { minX: wmin - swt, maxX: wmin, minY: wmin - swt, maxY: wmax + swt,
+    { minX: xMin - swt, maxX: xMin, minY: yMin - swt, maxY: yMax + swt,
       minZ: skyMinZ,    maxZ: skyMaxZ },
     SKY_TEXTURE,
   ));
   // East wall (+X).
   out.push(boxBrush(
-    { minX: wmax, maxX: wmax + swt, minY: wmin - swt, maxY: wmax + swt,
+    { minX: xMax, maxX: xMax + swt, minY: yMin - swt, maxY: yMax + swt,
       minZ: skyMinZ, maxZ: skyMaxZ },
     SKY_TEXTURE,
   ));
   // South wall (-Y).
   out.push(boxBrush(
-    { minX: wmin, maxX: wmax, minY: wmin - swt, maxY: wmin,
+    { minX: xMin, maxX: xMax, minY: yMin - swt, maxY: yMin,
       minZ: skyMinZ, maxZ: skyMaxZ },
     SKY_TEXTURE,
   ));
   // North wall (+Y).
   out.push(boxBrush(
-    { minX: wmin, maxX: wmax, minY: wmax, maxY: wmax + swt,
+    { minX: xMin, maxX: xMax, minY: yMax, maxY: yMax + swt,
       minZ: skyMinZ, maxZ: skyMaxZ },
     SKY_TEXTURE,
   ));
   // Ceiling (+Z).
   out.push(boxBrush(
-    { minX: wmin - swt, maxX: wmax + swt,
-      minY: wmin - swt, maxY: wmax + swt,
+    { minX: xMin - swt, maxX: xMax + swt,
+      minY: yMin - swt, maxY: yMax + swt,
       minZ: SKY_TOP_Z,  maxZ: SKY_TOP_Z + swt },
     SKY_TEXTURE,
   ));
@@ -135,21 +154,21 @@ function buildMapText({ tilemap, wadKey }) {
   // ---------- bedrock ----------
   // Solid slab below water — vis-opaque, seals the map from below.
   out.push(boxBrush(
-    { minX: wmin, maxX: wmax, minY: wmin, maxY: wmax,
+    { minX: xMin, maxX: xMax, minY: yMin, maxY: yMax,
       minZ: BEDROCK_TOP_Z - BEDROCK_THICKNESS, maxZ: BEDROCK_TOP_Z },
     BEDROCK_TEXTURE,
   ));
 
   // ---------- water (global) ----------
-  // One brush from bedrock top up to sea level, covering the whole world.
-  // Liquid texture (prefix '*') makes qbsp emit warpsurface faces.
-  // The water surface sits WATER_DROP units below SEA_LEVEL_Z so beach
-  // tiles (h=0, top at SEA_LEVEL_Z) read as a slight shoreline instead
-  // of coplanar with the water — both better visually and required for
-  // qbsp to avoid coplanar-face problems.
+  // One brush from bedrock top up to sea level, covering the (possibly
+  // strict-shrunk) world box. Liquid texture (prefix '*') makes qbsp
+  // emit warpsurface faces. The water surface sits WATER_DROP units
+  // below SEA_LEVEL_Z so beach tiles (h=0, top at SEA_LEVEL_Z) read as
+  // a slight shoreline instead of coplanar — both better visually and
+  // required for qbsp to avoid coplanar-face problems.
   const WATER_DROP = 8;
   out.push(boxBrush(
-    { minX: wmin, maxX: wmax, minY: wmin, maxY: wmax,
+    { minX: xMin, maxX: xMax, minY: yMin, maxY: yMax,
       minZ: BEDROCK_TOP_Z, maxZ: SEA_LEVEL_Z - WATER_DROP },
     WATER_TEXTURE,
   ));
@@ -177,11 +196,21 @@ function buildMapText({ tilemap, wadKey }) {
   // after worldspawn so they live in their own `{ classname light }` blocks.
   const pendingLights = [];
 
+  // Optional play area: when defined AND `restrict` is true, only emit
+  // cells whose (col, row) falls inside the rectangle. Cells outside
+  // become plain ocean (covered by the global water brush).
+  // pa / restrictArea are already declared up top (the world box also
+  // needs them for the strict-shrink case).
+  const inArea = restrictArea
+    ? (col, row) => (col >= pa.c0 && col <= pa.c1 && row >= pa.r0 && row <= pa.r1)
+    : () => true;
+
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       const i = row * cols + col;
       const h = heights[i];
       if (h < SEA_LEVEL_H) continue;
+      if (!inArea(col, row)) continue;
 
       const texIdx = textures[i];
       let tex = texForPaletteIdx(texIdx);
@@ -326,17 +355,45 @@ function buildMapText({ tilemap, wadKey }) {
   }
 
   // ---------- info_player_start ----------
-  // Spawn the player above the centre of the map, at mid-ceiling. The
-  // pilot starts airborne (AirQuake style — helicopter).
-  const spawn = tilemap.spawn ?? {
-    x: 0, y: 0,
-    z: Math.round((SEA_LEVEL_Z + SKY_TOP_Z) / 2),
-    angle: 0,
-  };
+  // Spawn the player at mid-ceiling above the chosen cell — the pilot
+  // starts airborne (AirQuake style). If z is unset (the usual case
+  // when placed via the 2D editor's spawn brush), derive it from the
+  // playable vertical range.
+  //
+  // Area restriction: when the play area is active and the user's spawn
+  // sits outside it (or there's no spawn at all), the writer drops a
+  // temporary spawn at the centre of the area, 4 cells above the cell's
+  // terrain height (or 4 cells above sea level if the centre is
+  // submerged).
+  const defaultZ = Math.round((SEA_LEVEL_Z + SKY_TOP_Z) / 2);
+  let sx, sy, sz, sa;
+  const userSpawn = tilemap.spawn;
+  const userSpawnInArea = userSpawn && typeof userSpawn.col === 'number'
+    && inArea(userSpawn.col, userSpawn.row);
+
+  if (restrictArea && !userSpawnInArea) {
+    const cCenter = Math.round((pa.c0 + pa.c1) / 2);
+    const rCenter = Math.round((pa.r0 + pa.r1) / 2);
+    const idx = rCenter * cols + cCenter;
+    const hCenter = heights[idx];
+    const baseZ = (hCenter >= SEA_LEVEL_H) ? hCenter * HEIGHT_UNIT : SEA_LEVEL_Z;
+    sx = -gridHalfX + cCenter * cellSize + cellSize / 2;
+    const ySouthIdx = (rows - 1) - rCenter;
+    sy = -gridHalfY + ySouthIdx * cellSize + cellSize / 2;
+    sz = baseZ + 4 * HEIGHT_UNIT;
+    sa = 0;
+    warnings.push('spawn was outside the play area — placed a temporary spawn at the area centre');
+  } else {
+    const spawnInput = userSpawn ?? { x: 0, y: 0, z: defaultZ, angle: 0 };
+    sx = spawnInput.x ?? 0;
+    sy = spawnInput.y ?? 0;
+    sz = (spawnInput.z == null) ? defaultZ : spawnInput.z;
+    sa = spawnInput.angle ?? 0;
+  }
   out.push('{');
   out.push('"classname" "info_player_start"');
-  out.push(`"origin" "${spawn.x} ${spawn.y} ${spawn.z}"`);
-  out.push(`"angle" "${spawn.angle}"`);
+  out.push(`"origin" "${Math.round(sx)} ${Math.round(sy)} ${Math.round(sz)}"`);
+  out.push(`"angle" "${sa}"`);
   out.push('}');
 
   return { text: out.join('\n') + '\n', warnings };

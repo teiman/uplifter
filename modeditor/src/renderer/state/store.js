@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react';
 import {
   makeEmptyTilemap, deserialiseTilemap, BRUSH_PALETTE, PALETTE, SEA_LEVEL_H,
-  HOUSE_STOREYS_MIN, HOUSE_STOREYS_MAX,
+  HOUSE_STOREYS_MIN, HOUSE_STOREYS_MAX, MESH_CHUNK_SIZE,
+  CELL_SIZE, HEIGHT_UNIT,
 } from '../../shared/types.mjs';
 
 /**
@@ -14,9 +15,45 @@ import {
 const state = {
   tilemap: makeEmptyTilemap(),
   selectedBrushIdx: 0,       // index into BRUSH_PALETTE
-  tool: 'paint',             // 'paint' (texture or object) | 'raise' | 'lower' | 'smooth'
-  view: '2d',                // '2d' | '3d'
+  mode: 'paint',             // 'paint' | 'height' | 'rect' | 'area' | '3d'
+  tool: 'paint',             // when mode='paint': always 'paint'
+                             // when mode='height': 'raise'|'lower'|'smooth'|'extend'
+                             // when mode='rect':   always 'rect' (no sub-tools)
+                             // when mode='area':   always 'area' (no sub-tools)
+                             // when mode='3d':     'perspective' | 'iso'
+                             //
+                             // The 3D viewport is "just another mode": the
+                             // view that renders the main canvas is derived
+                             // from mode (3d when mode === '3d', else 2d).
+                             // Within 3D mode, the tool picks the camera
+                             // projection — perspective (walk-around) or
+                             // iso (orthographic, classic 35.264°/45°).
   heightDelta: 1,
+  // Target height for the 'extend' tool. Set by the first click of a
+  // stroke (the cell under the cursor); kept across the drag so each
+  // dragged-over cell gets the same height.
+  extendTargetH: null,
+  // Iso view yaw index: 0..3, mapped to 45°, 135°, 225°, 315°. Lets
+  // the user rotate the isometric camera in 90° steps while keeping
+  // the same focus point. Persisted so re-entering the iso tool
+  // restores the last orientation.
+  isoYawIdx: 0,
+  // Shared 3D camera target world-space XY (Z reserved for future use).
+  // Viewport3D mirrors its live camRef.target here so 2D can recenter
+  // on the same world point when leaving 3D mode.
+  camera3dTargetX: 0,
+  camera3dTargetY: 0,
+  // Live cell at the centre of the 2D viewport. Canvas2D mirrors this
+  // every time its view changes so the 3D camera can recenter on the
+  // same world point when the user switches to 3D mode.
+  view2dCenterCol: 0,
+  view2dCenterRow: 0,
+  // One-shot focus requests, one per direction. Set by setMode on a
+  // cross-view transition; the receiving viewport consumes (reads and
+  // clears) it on its next mount. Kept separate so 2D↔3D toggles don't
+  // step on each other.
+  pendingFocusCell: null,        // for Canvas2D: { col, row }
+  pendingFocus3dTarget: null,    // for Viewport3D: { x, y }
   revision: 0,
 };
 
@@ -24,6 +61,37 @@ const subscribers = new Set();
 function notify() {
   state.revision++;
   for (const fn of subscribers) fn();
+}
+
+// ---------- 3D mesh dirty tracking ----------
+// Cell edits mark their chunk (cx,cy) as dirty here. Viewport3D drains
+// the set every animation frame and rebuilds only those chunks.
+const dirty3dChunks = new Set();
+// When set, Viewport3D rebuilds every chunk + the water plane on its
+// next frame and clears this flag. Used after resetMap/loadTilemap when
+// the entire grid changes at once.
+let fullRebuild3dRequested = false;
+
+function markChunkDirty(col, row) {
+  const cx = (col / MESH_CHUNK_SIZE) | 0;
+  const cy = (row / MESH_CHUNK_SIZE) | 0;
+  dirty3dChunks.add(`${cx},${cy}`);
+}
+
+/** Called by Viewport3D each frame. Returns the set of dirty chunk keys
+ *  ("cx,cy"), then clears the internal set. */
+export function drainDirty3dChunks() {
+  const out = new Set(dirty3dChunks);
+  dirty3dChunks.clear();
+  return out;
+}
+
+/** Called by Viewport3D each frame. Returns true (and clears) if a full
+ *  rebuild was requested since the last drain. */
+export function takeFullRebuildRequest() {
+  if (!fullRebuild3dRequested) return false;
+  fullRebuild3dRequested = false;
+  return true;
 }
 
 export function subscribe(fn) {
@@ -52,9 +120,21 @@ export function useStore(selector) {
 // ---------- accessors ----------
 export function getTilemap()        { return state.tilemap; }
 export function getBrushIdx()       { return state.selectedBrushIdx; }
+export function getMode()           { return state.mode; }
 export function getTool()           { return state.tool; }
-export function getView()           { return state.view; }
+/** Derived: the main canvas view ('2d' or '3d') is dictated by mode.
+ *  Everything that's not 3D is a 2D-editing mode. */
+export function getView()           { return state.mode === '3d' ? '3d' : '2d'; }
 export function getHeightDelta()    { return state.heightDelta; }
+export function getIsoYawIdx()      { return state.isoYawIdx; }
+
+/** Rotate the iso camera by ±1 step (90° each). The view stays focused
+ *  on the same world target because cameraEye is recomputed from
+ *  yaw/pitch + target/distance; only the eye position moves. */
+export function rotateIsoYaw(step) {
+  state.isoYawIdx = ((state.isoYawIdx + step) % 4 + 4) % 4;
+  notify();
+}
 
 // ---------- mutators ----------
 export function setBrushIdx(idx) {
@@ -62,13 +142,82 @@ export function setBrushIdx(idx) {
   notify();
 }
 
-export function setTool(tool) {
-  state.tool = tool;
+/**
+ * Switch the top-level mode. Resets the sub-tool to the mode's default:
+ *   paint  → 'paint'
+ *   height → 'raise'
+ *   rect   → 'rect'
+ *   area   → 'area'
+ *   3d     → '3d'
+ */
+export function setMode(mode) {
+  if (state.mode === mode) return;
+  const t = state.tilemap;
+  const gridHalfX = (t.cols * CELL_SIZE) / 2;
+  const gridHalfY = (t.rows * CELL_SIZE) / 2;
+  // Leaving 3D for any 2D editing mode: stash the cell under the 3D
+  // camera's target so Canvas2D can recenter on the same world spot
+  // when it mounts.
+  if (state.mode === '3d' && mode !== '3d') {
+    const col = Math.floor((state.camera3dTargetX + gridHalfX) / CELL_SIZE);
+    const ySouthIdx = Math.floor((state.camera3dTargetY + gridHalfY) / CELL_SIZE);
+    const row = (t.rows - 1) - ySouthIdx;
+    state.pendingFocusCell = { col, row };
+  }
+  // Entering 3D from any 2D mode: stash the world XY of the 2D
+  // viewport's centre cell so Viewport3D can point its camera there
+  // on mount.
+  if (state.mode !== '3d' && mode === '3d') {
+    const col = state.view2dCenterCol;
+    const row = state.view2dCenterRow;
+    const ySouthIdx = (t.rows - 1) - row;
+    const x = -gridHalfX + (col + 0.5) * CELL_SIZE;
+    const y = -gridHalfY + (ySouthIdx + 0.5) * CELL_SIZE;
+    state.pendingFocus3dTarget = { x, y };
+  }
+  state.mode = mode;
+  state.tool = (mode === 'paint')  ? 'paint'
+             : (mode === 'rect')   ? 'rect'
+             : (mode === 'area')   ? 'area'
+             : (mode === '3d')     ? 'iso'
+             :                       'raise';
   notify();
 }
 
-export function setView(view) {
-  state.view = view;
+/** Viewport3D mirrors its live camera target world XY here every frame
+ *  so 2D recentering on mode switch has a fresh value. Silent write —
+ *  no notify(), since no React component reads this directly. */
+export function setCamera3dTarget(x, y) {
+  state.camera3dTargetX = x;
+  state.camera3dTargetY = y;
+}
+
+/** Canvas2D mirrors the cell at the centre of its viewport here so 3D
+ *  mount can pick it up. Silent. */
+export function setView2dCenter(col, row) {
+  state.view2dCenterCol = col;
+  state.view2dCenterRow = row;
+}
+
+/** Canvas2D reads and clears this on mount. Returns null when there's
+ *  no pending focus request. Clearing it on read prevents the focus
+ *  from re-applying on subsequent remounts (e.g. re-running an effect). */
+export function takePendingFocusCell() {
+  const c = state.pendingFocusCell;
+  state.pendingFocusCell = null;
+  return c;
+}
+
+/** Viewport3D reads and clears this on mount. Same pattern as
+ *  takePendingFocusCell, but in world XY for the 3D camera target. */
+export function takePendingFocus3dTarget() {
+  const t = state.pendingFocus3dTarget;
+  state.pendingFocus3dTarget = null;
+  return t;
+}
+
+export function setTool(tool) {
+  state.tool = tool;
   notify();
 }
 
@@ -89,12 +238,76 @@ export function setQuality(q) {
 
 export function resetMap() {
   state.tilemap = makeEmptyTilemap();
+  fullRebuild3dRequested = true;
   notify();
 }
 
 /** Replace the current tilemap with a deserialised one (from disk). */
 export function loadTilemap(serialised) {
   state.tilemap = deserialiseTilemap(serialised);
+  fullRebuild3dRequested = true;
+  notify();
+}
+
+/** Set the playable area to the given inclusive cell rectangle.
+ *  Order of corners doesn't matter; we normalise here.
+ *  - `restrict` (default true): when on, mapWriter omits terrain cells
+ *    outside the area.
+ *  - `strict` (default true): on top of `restrict`, also shrinks the
+ *    world box (sky walls/ceiling, bedrock, global water) to the area
+ *    bounds. Much faster to compile because qbsp's `-subdivide` has
+ *    far smaller faces to chew through. Off → the world box stays at
+ *    the full ±WORLD_HALF. */
+export function setPlayArea(c0, r0, c1, r1, restrict = true, strict = true) {
+  const t = state.tilemap;
+  const cMin = Math.max(0, Math.min(c0, c1));
+  const cMax = Math.min(t.cols - 1, Math.max(c0, c1));
+  const rMin = Math.max(0, Math.min(r0, r1));
+  const rMax = Math.min(t.rows - 1, Math.max(r0, r1));
+  t.playArea = { c0: cMin, r0: rMin, c1: cMax, r1: rMax, restrict, strict };
+  // 3D viewport filters geometry by playArea, so the area changing
+  // means every chunk + the water plane must be re-built.
+  fullRebuild3dRequested = true;
+  notify();
+}
+
+/** Remove the playable area entirely. */
+export function clearPlayArea() {
+  state.tilemap.playArea = null;
+  fullRebuild3dRequested = true;
+  notify();
+}
+
+/** Toggle whether the area restricts compilation (or just shows in the
+ *  editor as a reference). No-op when there's no area defined. */
+export function setPlayAreaRestrict(restrict) {
+  const a = state.tilemap.playArea;
+  if (!a) return;
+  a.restrict = !!restrict;
+  notify();
+}
+
+/** Toggle the 'strict' flag — when on, the world box also shrinks to
+ *  fit the area, dramatically speeding up compilation at the cost of
+ *  the rest of the world being unreachable. */
+export function setPlayAreaStrict(strict) {
+  const a = state.tilemap.playArea;
+  if (!a) return;
+  a.strict = !!strict;
+  notify();
+}
+
+/** Move the player spawn to the centre of (col, row) in world coords.
+ *  The mapWriter re-derives Z at compile time, so we leave it null
+ *  (and `angle` defaults to 0). */
+function setSpawnToCell(col, row) {
+  const t = state.tilemap;
+  const gridHalfX = (t.cols * CELL_SIZE) / 2;
+  const gridHalfY = (t.rows * CELL_SIZE) / 2;
+  const x = -gridHalfX + col * CELL_SIZE + CELL_SIZE / 2;
+  const ySouthIdx = (t.rows - 1) - row;
+  const y = -gridHalfY + ySouthIdx * CELL_SIZE + CELL_SIZE / 2;
+  t.spawn = { col, row, x, y, z: null, angle: 0 };
   notify();
 }
 
@@ -107,6 +320,89 @@ function houseStoreysFromNeighbours(t, col, row) {
     return (o && o.kind === 'casa' && typeof o.storeys === 'number') ? o.storeys : null;
   };
   return check(col - 1, row) ?? check(col + 1, row) ?? check(col, row - 1) ?? check(col, row + 1);
+}
+
+/**
+ * Apply the currently selected paint brush to a cell. Returns true if
+ * anything changed.
+ *
+ * `toggleObject`:
+ *   - true  (default for single-cell paint): clicking the same kind on a
+ *     cell that already holds it removes the object.
+ *   - false (used by fillRect): always set the object, never toggle.
+ */
+function applyPaintAtCell(col, row, { toggleObject } = { toggleObject: true }) {
+  const t = state.tilemap;
+  const i = row * t.cols + col;
+  let changed = false;
+  const brush = BRUSH_PALETTE[state.selectedBrushIdx];
+  if (!brush) return false;
+  if (brush.type === 'texture') {
+    const palIdx = PALETTE.findIndex(p => p.id === brush.id);
+    if (palIdx < 0) return false;
+    // Painting a texture also lifts a submerged cell to sea level —
+    // otherwise pintar on the default all-water map would produce no
+    // visible cube. Use Altura tools to submerge or raise further.
+    if (t.textures[i] !== palIdx) { t.textures[i] = palIdx; changed = true; }
+    if (t.heights[i] < SEA_LEVEL_H) { t.heights[i] = SEA_LEVEL_H; changed = true; }
+  } else if (brush.type === 'spawn') {
+    // Spawn is a singleton — each click relocates the single
+    // info_player_start to the centre of the clicked cell. Z is
+    // re-derived by the mapWriter (mid-ceiling above the terrain).
+    setSpawnToCell(col, row);
+    // No per-chunk dirty needed (no geometry change); notify so any
+    // overlay redraws.
+    return false;
+  } else if (brush.type === 'object') {
+    const existing = t.objects[i];
+    if (toggleObject && existing && existing.kind === brush.id) {
+      t.objects[i] = null;
+      changed = true;
+    } else if (!existing || existing.kind !== brush.id) {
+      const newObj = { kind: brush.id };
+      if (brush.id === 'casa') {
+        const inherited = houseStoreysFromNeighbours(t, col, row);
+        newObj.storeys = inherited != null
+          ? inherited
+          : (HOUSE_STOREYS_MIN + Math.floor(Math.random() * (HOUSE_STOREYS_MAX - HOUSE_STOREYS_MIN + 1)));
+      }
+      t.objects[i] = newObj;
+      changed = true;
+      // Snap a submerged cell up so the object doesn't end up under
+      // water. Pick a default 'tierra' texture if the cell was bare,
+      // so the surface isn't empty on emergence.
+      if (t.heights[i] < SEA_LEVEL_H) {
+        t.heights[i] = SEA_LEVEL_H;
+        if (t.textures[i] < 0) {
+          const dirtIdx = PALETTE.findIndex(p => p.id === 'tierra');
+          if (dirtIdx >= 0) t.textures[i] = dirtIdx;
+        }
+      }
+    }
+  }
+  if (changed) markChunkDirty(col, row);
+  return changed;
+}
+
+/**
+ * Fill an axis-aligned cell rectangle with the currently selected brush.
+ * Inclusive on both ends. Used by the 'rect' tool when the user releases
+ * the mouse over the target rectangle.
+ */
+export function fillRect(c0, r0, c1, r1) {
+  const t = state.tilemap;
+  const cMin = Math.max(0, Math.min(c0, c1));
+  const cMax = Math.min(t.cols - 1, Math.max(c0, c1));
+  const rMin = Math.max(0, Math.min(r0, r1));
+  const rMax = Math.min(t.rows - 1, Math.max(r0, r1));
+  let anyChanged = false;
+  for (let row = rMin; row <= rMax; row++) {
+    for (let col = cMin; col <= cMax; col++) {
+      if (applyPaintAtCell(col, row, { toggleObject: false })) anyChanged = true;
+    }
+  }
+  if (anyChanged) notify();
+  return anyChanged;
 }
 
 /**
@@ -127,53 +423,17 @@ export function applyToolAtCell(col, row) {
   let changed = false;
   switch (state.tool) {
     case 'paint': {
-      const brush = BRUSH_PALETTE[state.selectedBrushIdx];
-      if (!brush) return false;
-      if (brush.type === 'texture') {
-        const palIdx = PALETTE.findIndex(p => p.id === brush.id);
-        if (palIdx < 0) return false;
-        const palItem = PALETTE[palIdx];
-        if (palItem.id === 'agua') {
-          // Submerge: drop height below sea level, clear texture.
-          if (t.heights[i] >= SEA_LEVEL_H) { t.heights[i] = SEA_LEVEL_H - 1; changed = true; }
-          if (t.textures[i] !== -1)        { t.textures[i] = -1;             changed = true; }
-        } else {
-          if (t.textures[i] !== palIdx) { t.textures[i] = palIdx; changed = true; }
-          if (t.heights[i] < SEA_LEVEL_H) { t.heights[i] = SEA_LEVEL_H; changed = true; }
-        }
-      } else if (brush.type === 'object') {
-        const existing = t.objects[i];
-        if (existing && existing.kind === brush.id) {
-          // Toggle off — second click on same kind removes it.
-          t.objects[i] = null;
-          changed = true;
-        } else {
-          const newObj = { kind: brush.id };
-          // Houses share a storey count with their 4-connected neighbours
-          // (a "block" of contiguous houses uses the same building height).
-          // Inherit from an existing neighbour if any; otherwise pick a
-          // fresh random count in [2..4]. Persisted on the object so the
-          // map compiles deterministically.
-          if (brush.id === 'casa') {
-            const inherited = houseStoreysFromNeighbours(t, col, row);
-            newObj.storeys = inherited != null
-              ? inherited
-              : (HOUSE_STOREYS_MIN + Math.floor(Math.random() * (HOUSE_STOREYS_MAX - HOUSE_STOREYS_MIN + 1)));
-          }
-          t.objects[i] = newObj;
-          changed = true;
-          // Placing an object on a submerged cell makes no sense (it'd be
-          // underwater). Snap the cell up to sea level if needed.
-          if (t.heights[i] < SEA_LEVEL_H) {
-            t.heights[i] = SEA_LEVEL_H;
-            // Default a texture so the cell isn't bare on emergence.
-            if (t.textures[i] < 0) {
-              const dirtIdx = PALETTE.findIndex(p => p.id === 'tierra');
-              if (dirtIdx >= 0) t.textures[i] = dirtIdx;
-            }
-          }
-        }
-      }
+      changed = applyPaintAtCell(col, row);
+      break;
+    }
+    case 'rect': {
+      // Single-click in rect mode is a no-op. The fill happens on
+      // mouse-up via fillRect(). Marking changed=false avoids redraws.
+      break;
+    }
+    case 'area': {
+      // Same shape as 'rect': mouseup handler on the canvas calls
+      // setPlayArea() with the drag bounds. Single-click is a no-op.
       break;
     }
     case 'raise': {
@@ -206,9 +466,39 @@ export function applyToolAtCell(col, row) {
       if (avg !== t.heights[i]) { t.heights[i] = avg; changed = true; }
       break;
     }
+    case 'extend': {
+      // The first click of a stroke captures the cell's current height
+      // as the target. Subsequent cells dragged over snap to that
+      // height — handy for flattening or extending a plateau.
+      if (state.extendTargetH == null) {
+        state.extendTargetH = t.heights[i];
+      } else if (t.heights[i] !== state.extendTargetH) {
+        t.heights[i] = state.extendTargetH;
+        // Submerging a cell strips its surface state, consistent with
+        // the 'lower' tool.
+        if (t.heights[i] < SEA_LEVEL_H) {
+          t.textures[i] = -1;
+          t.objects[i] = null;
+        }
+        changed = true;
+      }
+      break;
+    }
     default:
       break;
   }
-  if (changed) notify();
+  if (changed) {
+    markChunkDirty(col, row);
+    notify();
+  }
   return changed;
+}
+
+/** Called by the canvas when the mouse button is released. Clears
+ *  per-stroke state so the next drag starts fresh. */
+export function endStroke() {
+  if (state.extendTargetH != null) {
+    state.extendTargetH = null;
+    // No notify — visual state didn't change, only intent.
+  }
 }
