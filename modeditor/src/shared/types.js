@@ -68,18 +68,35 @@ const DEFAULT_SUN = {
  *  in the palette. */
 const SKY_TEXTURE = 'sky_auto';
 const WATER_TEXTURE = '*water';
-const BEDROCK_TEXTURE = 'dirt';
+// The bedrock slab is hidden under the water brush; auto_wall always
+// exists in auto.wad so the writer can rely on it without the user
+// shipping a 'dirt' texture themselves.
+const BEDROCK_TEXTURE = 'auto_wall';
 
-/** Derive the 5 Quake texture names for a biome (top/side/capital/base/
- *  bottom). Hyphens become underscores (Quake doesn't allow `-`). */
-function texturesFor(id) {
+const QUAKE_TEX_NAME_MAX = 15;
+
+/** Build the texture name for a single face. The face suffix is kept
+ *  in full (so cubes can never collide on truncation); the biome
+ *  prefix is shortened from the right if the combined name exceeds
+ *  QUAKE_TEX_NAME_MAX. Any trailing underscore left by the cut is
+ *  stripped so the final name never has `__`. */
+function texNameFor(id, face) {
   const s = id.replace(/-/g, '_');
+  const sep = '_';
+  const budget = QUAKE_TEX_NAME_MAX - sep.length - face.length;
+  const prefix = (s.length <= budget) ? s : s.slice(0, budget).replace(/_+$/, '');
+  return prefix + sep + face;
+}
+
+/** Derive the 5 Quake texture names for a biome. Same algorithm the
+ *  texturesWadBuilder uses, so .map refs match WAD lump names exactly. */
+function texturesFor(id) {
   return {
-    top:     `${s}_top`,
-    side:    `${s}_side`,
-    capital: `${s}_capital`,
-    base:    `${s}_base`,
-    bottom:  `${s}_bottom`,
+    top:     texNameFor(id, 'top'),
+    side:    texNameFor(id, 'side'),
+    capital: texNameFor(id, 'capital'),
+    base:    texNameFor(id, 'base'),
+    bottom:  texNameFor(id, 'bottom'),
   };
 }
 
@@ -127,12 +144,13 @@ const SPECIAL_OBJECTS = [
   { kind: 'lampara',     label: 'Lámpara',     glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
+  // Reference procedural textures generated into auto.wad on launch.
   { kind: 'arbol',       label: 'Árbol',       glyph: '♣', color: '#3a8030',
-    heightU: 192, footprint: 0.5, tex: 'dirt' },
+    heightU: 192, footprint: 0.5, tex: '+0wood' },
   { kind: 'arbusto',     label: 'Arbusto',     glyph: '♠', color: '#4a7040',
-    heightU: 32, footprint: 0.6, tex: 'dirt' },
+    heightU: 32, footprint: 0.6, tex: 'gren3a' },
   { kind: 'roca',        label: 'Roca',        glyph: '◆', color: '#7a7a7a',
-    heightU: 48, footprint: 0.5, tex: 'dirt' },
+    heightU: 48, footprint: 0.5, tex: 'rock1_2' },
 ];
 const OBJECT_BY_KIND = new Map(SPECIAL_OBJECTS.map(o => [o.kind, o]));
 
@@ -235,6 +253,8 @@ module.exports = {
   WATER_TEXTURE,
   BEDROCK_TEXTURE,
   FACE_KEYS,
+  QUAKE_TEX_NAME_MAX,
+  texNameFor,
   texturesFor,
   pickFaceTextures,
   PALETTE,

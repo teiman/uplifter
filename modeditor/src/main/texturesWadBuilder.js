@@ -16,8 +16,12 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { writeWad, allocMiptexLump, nearestPaletteIndex } = require('./wadWriter');
+const { texNameFor, FACE_KEYS } = require('../shared/types');
 
-const FACE_KEYS = ['top', 'side', 'capital', 'base', 'bottom'];
+/** Bumped whenever the WAD-building algorithm (naming, palette,
+ *  miptex layout, …) changes in a way that requires regenerating the
+ *  WAD even when no PNG was modified. Stored in the manifest. */
+const BUILDER_VERSION = 2;
 
 /**
  * Decode a PNG file to RGBA via Electron's nativeImage. Returns
@@ -125,19 +129,22 @@ async function scanTextures(textureRoot) {
 }
 
 function manifestFromScan(scan) {
-  const m = {};
-  for (const r of scan) m[r.rel] = r.mtimeMs;
-  return m;
+  const files = {};
+  for (const r of scan) files[r.rel] = r.mtimeMs;
+  return { version: BUILDER_VERSION, files };
 }
 
 function manifestsEqual(a, b) {
   if (!a || !b) return false;
-  const ka = Object.keys(a).sort();
-  const kb = Object.keys(b).sort();
+  if (a.version !== b.version) return false;
+  const fa = a.files || {};
+  const fb = b.files || {};
+  const ka = Object.keys(fa).sort();
+  const kb = Object.keys(fb).sort();
   if (ka.length !== kb.length) return false;
   for (let i = 0; i < ka.length; i++) {
     if (ka[i] !== kb[i]) return false;
-    if (a[ka[i]] !== b[kb[i]]) return false;
+    if (fa[ka[i]] !== fb[kb[i]]) return false;
   }
   return true;
 }
@@ -150,15 +157,11 @@ async function buildTexturesWad(scan, outWadPath) {
   const entries = [];
   for (const r of scan) {
     const png = await loadPngRgba(r.abs);
-    const id = r.biome.replace(/-/g, '_');
-    const fullName = `${id}_${r.face}`;
-    // Quake miptex names cap at 15 ASCII chars + null. If the biome id
-    // is long enough to overrun, truncate and warn — the user will
-    // notice the qbsp warning and shorten the biome name.
-    if (fullName.length > 15) {
-      console.warn(`[textures.wad] "${fullName}" > 15 chars, truncating`);
-    }
-    const name = fullName.slice(0, 15);
+    // texNameFor() is the same helper mapWriter uses. Going through it
+    // here guarantees the WAD lump name and the .map texture reference
+    // match byte-for-byte even when the biome id is long enough that
+    // the combined name would otherwise be truncated.
+    const name = texNameFor(r.biome, r.face);
     entries.push({ name, lump: pngRgbaToMiptex(name, png.width, png.height, png.rgba) });
   }
   return writeWad(outWadPath, entries);

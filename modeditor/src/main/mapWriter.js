@@ -355,7 +355,7 @@ function buildMapText({ tilemap, wadKey }) {
     }
   }
   if (untexturedLand > 0) {
-    warnings.push(`${untexturedLand} emerged cells had no texture — defaulted to '${BEDROCK_TEXTURE}'`);
+    warnings.push(`${untexturedLand} emerged cells had no texture — defaulted to 'tierra' biome`);
   }
   if (landCount === 0) {
     warnings.push('no land cells emerged — map is pure ocean');

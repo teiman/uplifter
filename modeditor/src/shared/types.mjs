@@ -67,19 +67,41 @@ export const DEFAULT_SUN = {
 
 export const SKY_TEXTURE = 'sky_auto';
 export const WATER_TEXTURE = '*water';
-export const BEDROCK_TEXTURE = 'dirt';
+// The bedrock slab sits under the global water brush and is never
+// seen, but qbsp still wants a real texture on its faces. Point to
+// auto_wall — a rocky procedural texture that always exists in
+// auto.wad, removing the dependency on the user shipping a 'dirt'
+// texture in a hand-built WAD.
+export const BEDROCK_TEXTURE = 'auto_wall';
+
+/** Maximum length of a Quake miptex name in characters (the on-disk
+ *  field is 16 bytes, last byte is a null terminator). */
+export const QUAKE_TEX_NAME_MAX = 15;
+
+/** Build the texture name for a single face. The face suffix is kept
+ *  in full (so cubes can never collide on truncation), and the biome
+ *  prefix is shortened from the right if the combined name exceeds
+ *  QUAKE_TEX_NAME_MAX. Any trailing underscore left by the cut is
+ *  stripped so the final name never has `__`. */
+export function texNameFor(id, face) {
+  const s = id.replace(/-/g, '_');
+  const sep = '_';
+  const budget = QUAKE_TEX_NAME_MAX - sep.length - face.length;
+  const prefix = (s.length <= budget) ? s : s.slice(0, budget).replace(/_+$/, '');
+  return prefix + sep + face;
+}
 
 /** Derive the 5 Quake texture names for a biome (top/side/capital/base/
- *  bottom) from its id. Quake doesn't allow `-` in texture names, so
- *  hyphens in the id are normalised to `_`. See column.md §Naming. */
+ *  bottom) from its id. The texturesWadBuilder uses this same helper
+ *  when generating textures.wad, guaranteeing that the .map references
+ *  and the WAD lump names match byte-for-byte. See column.md §Naming. */
 export function texturesFor(id) {
-  const s = id.replace(/-/g, '_');
   return {
-    top:     `${s}_top`,
-    side:    `${s}_side`,
-    capital: `${s}_capital`,
-    base:    `${s}_base`,
-    bottom:  `${s}_bottom`,
+    top:     texNameFor(id, 'top'),
+    side:    texNameFor(id, 'side'),
+    capital: texNameFor(id, 'capital'),
+    base:    texNameFor(id, 'base'),
+    bottom:  texNameFor(id, 'bottom'),
   };
 }
 
@@ -168,12 +190,14 @@ export const SPECIAL_OBJECTS = [
   { kind: 'lampara',     label: 'Lámpara',     glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
+  // Trees/bushes/rocks reference textures that auto.wad provides
+  // procedurally — no dependency on a hand-built WAD.
   { kind: 'arbol',       label: 'Árbol',       glyph: '♣', color: '#3a8030',
-    heightU: 192, footprint: 0.5, tex: 'dirt' },
+    heightU: 192, footprint: 0.5, tex: '+0wood' },
   { kind: 'arbusto',     label: 'Arbusto',     glyph: '♠', color: '#4a7040',
-    heightU: 32, footprint: 0.6, tex: 'dirt' },
+    heightU: 32, footprint: 0.6, tex: 'gren3a' },
   { kind: 'roca',        label: 'Roca',        glyph: '◆', color: '#7a7a7a',
-    heightU: 48, footprint: 0.5, tex: 'dirt' },
+    heightU: 48, footprint: 0.5, tex: 'rock1_2' },
 ];
 
 /** Random storeys per house cluster — atlasmapper uses 2..4 inclusive. */
