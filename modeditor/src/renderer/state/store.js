@@ -4,6 +4,7 @@ import {
   HOUSE_STOREYS_MIN, HOUSE_STOREYS_MAX, MESH_CHUNK_SIZE,
   CELL_SIZE, HEIGHT_UNIT,
 } from '../../shared/types.mjs';
+import { generateCityAt } from './generators/city.js';
 
 /**
  * Minimal external store: mutable singleton + subscriber set. Components
@@ -15,11 +16,12 @@ import {
 const state = {
   tilemap: makeEmptyTilemap(),
   selectedBrushIdx: 0,       // index into BRUSH_PALETTE
-  mode: 'paint',             // 'paint' | 'height' | 'area' | 'copy' | '3d'
+  mode: 'paint',             // 'paint' | 'height' | 'area' | 'copy' | 'gen' | '3d'
   tool: 'paint',             // when mode='paint':  'paint' | 'rect' | 'bucket'
                              // when mode='height': 'raise'|'lower'|'smooth'|'extend'|'rect'
                              // when mode='area':   always 'area' (no sub-tools)
                              // when mode='copy':   'copy' | 'paste'
+                             // when mode='gen':    'city'
                              // when mode='3d':     'perspective' | 'iso'
                              //
                              // 'rect' is a drag-rectangle sub-tool that
@@ -158,7 +160,7 @@ export function setBrushIdx(idx) {
   notify();
 }
 
-const VALID_MODES = new Set(['paint', 'height', 'area', 'copy', '3d']);
+const VALID_MODES = new Set(['paint', 'height', 'area', 'copy', 'gen', '3d']);
 
 /**
  * Switch the top-level mode. Resets the sub-tool to the mode's default:
@@ -201,6 +203,7 @@ export function setMode(mode) {
              : (mode === 'height') ? 'raise'
              : (mode === 'area')   ? 'area'
              : (mode === 'copy')   ? 'copy'
+             : (mode === 'gen')    ? 'city'
              : (mode === '3d')     ? 'iso'
              :                       'paint';
   notify();
@@ -598,6 +601,23 @@ export function pasteAt(col, row) {
 export function clearClipboard() {
   state.clipboard = null;
   notify();
+}
+
+/**
+ * Run the city generator on the region under (col, row). The generator
+ * itself is a pure function on the tilemap shape; this wrapper marks
+ * each dirty cell's chunk so the 3D viewport rebuilds incrementally,
+ * and notifies subscribers exactly once at the end.
+ *
+ * Returns the number of cells modified (0 when the seed is invalid:
+ * submerged, on an object, or off-grid).
+ */
+export function runCityGenerator(col, row) {
+  const { modified, dirtyCells } = generateCityAt(state.tilemap, col, row);
+  if (modified === 0) return 0;
+  for (const { col: cc, row: rr } of dirtyCells) markChunkDirty(cc, rr);
+  notify();
+  return modified;
 }
 
 /**

@@ -19,6 +19,7 @@ import {
   floodFillPaint,
   copyRect,
   pasteAt,
+  runCityGenerator,
   setPlayArea,
   clearPlayArea,
   takePendingFocusCell,
@@ -604,6 +605,16 @@ export function Canvas2D() {
       // top-left anchor of the destination. No-op if clipboard empty.
       const { col, row } = cellFromEvent(e);
       pasteAt(col, row);
+      endStroke();
+      return;
+    }
+    if (getMode() === 'gen' && getTool() === 'city') {
+      // Single click drops a city on the region connected to (col,row)
+      // with the same height + texture. The generator handles the
+      // flood fill internally and is a no-op on submerged / object-
+      // occupied seeds.
+      const { col, row } = cellFromEvent(e);
+      runCityGenerator(col, row);
       endStroke();
       return;
     }

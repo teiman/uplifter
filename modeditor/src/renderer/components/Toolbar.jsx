@@ -17,17 +17,23 @@ import { regionOfCell, REGION_GRID } from '../../shared/types.mjs';
 
 // --- top-level tabs (modes) ---
 const MODE_TABS = [
-  { id: 'paint',  label: 'Pintar', icon: 'tint' },
-  { id: 'height', label: 'Altura', icon: 'mountain' },
-  { id: 'area',   label: 'Área',   icon: 'selection' },
-  { id: 'copy',   label: 'Copia',  icon: 'duplicate' },
-  { id: '3d',     label: '3D',     icon: 'cube' },
+  { id: 'paint',  label: 'Pintar',     icon: 'tint' },
+  { id: 'height', label: 'Altura',     icon: 'mountain' },
+  { id: 'area',   label: 'Área',       icon: 'selection' },
+  { id: 'copy',   label: 'Copia',      icon: 'duplicate' },
+  { id: 'gen',    label: 'Generadores', icon: 'random' },
+  { id: '3d',     label: '3D',         icon: 'cube' },
 ];
 
 // --- copy sub-tools (shown in the Copia ribbon) ---
 const COPY_TOOLS = [
   { id: 'copy',  label: 'Copiar', icon: 'duplicate' },
   { id: 'paste', label: 'Pegar',  icon: 'clipboard' },
+];
+
+// --- generator sub-tools (shown in the Generadores ribbon) ---
+const GEN_TOOLS = [
+  { id: 'city', label: 'Ciudad', icon: 'office' },
 ];
 
 // --- paint sub-tools (shown in the Pintar ribbon) ---
@@ -191,6 +197,28 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
                 <MiniNumber value={heightDelta} min={1} onCommit={setHeightDelta} />
               </div>
             )}
+          </>
+        )}
+
+        {mode === 'gen' && (
+          <>
+            <ButtonGroup>
+              {GEN_TOOLS.map(t => (
+                <Button
+                  key={t.id}
+                  icon={t.icon}
+                  active={tool === t.id}
+                  onClick={() => setTool(t.id)}
+                >
+                  {t.label}
+                </Button>
+              ))}
+            </ButtonGroup>
+            <span className="ribbon-hint">
+              {tool === 'city'
+                ? 'Click en una celda: rellena la región conexa con la misma altura y textura con un grid de casas + calles.'
+                : 'Elige un generador y click para rellenar.'}
+            </span>
           </>
         )}
 
