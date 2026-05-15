@@ -13,9 +13,12 @@ import {
   getMode,
   getTool,
   getRectTargetH,
+  getClipboard,
   fillRect,
   fillRectHeight,
   floodFillPaint,
+  copyRect,
+  pasteAt,
   setPlayArea,
   clearPlayArea,
   takePendingFocusCell,
@@ -69,6 +72,9 @@ export function Canvas2D() {
   // highlight overlay. Kept as a ref (not state) because we redraw
   // imperatively and don't need React re-renders.
   const hoverRegionRef = useRef(null);
+  // Cell under the cursor while in copy/paste mode with tool='paste';
+  // drives the dashed preview rect of where the clipboard will land.
+  const pasteHoverRef = useRef(null);
   // Bumps each time an image finishes loading so the canvas redraws with
   // the freshly available texture.
   const [imageRev, setImageRev] = useState(0);
@@ -409,7 +415,9 @@ export function Canvas2D() {
       }
     }
 
-    // Drag overlay for the rect-fill tool.
+    // Drag overlay for the rect tool (paint/height fill OR copy
+    // source select). Green when in copy mode to distinguish it from
+    // a destructive fill drag.
     if (dragRef.current.active === 'rect' && dragRef.current.rectStart) {
       const a = dragRef.current.rectStart;
       const b = dragRef.current.rectEnd;
@@ -421,13 +429,35 @@ export function Canvas2D() {
       const y0 = (rMin     - view.offsetCellY) * tile;
       const x1 = (cMax + 1 - view.offsetCellX) * tile;
       const y1 = (rMax + 1 - view.offsetCellY) * tile;
-      ctx.fillStyle   = 'rgba(80, 160, 255, 0.18)';
-      ctx.strokeStyle = 'rgba(120, 200, 255, 0.95)';
+      const isCopy = getMode() === 'copy';
+      ctx.fillStyle   = isCopy ? 'rgba(100, 230, 130, 0.18)' : 'rgba(80, 160, 255, 0.18)';
+      ctx.strokeStyle = isCopy ? 'rgba(130, 255, 160, 0.95)' : 'rgba(120, 200, 255, 0.95)';
       ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
       ctx.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
       ctx.setLineDash([]);
+    }
+
+    // Paste preview: dashed rect at the cursor sized by the clipboard,
+    // showing where the next paste will land. Only when the user is in
+    // copy mode with the paste tool and there's something to paste.
+    if (getMode() === 'copy' && getTool() === 'paste' && pasteHoverRef.current) {
+      const cb = getClipboard();
+      if (cb) {
+        const hp = pasteHoverRef.current;
+        const x0 = (hp.col              - view.offsetCellX) * tile;
+        const y0 = (hp.row              - view.offsetCellY) * tile;
+        const x1 = (hp.col + cb.cols    - view.offsetCellX) * tile;
+        const y1 = (hp.row + cb.rows    - view.offsetCellY) * tile;
+        ctx.fillStyle   = 'rgba(255, 200, 80, 0.18)';
+        ctx.strokeStyle = 'rgba(255, 220, 120, 0.95)';
+        ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
+        ctx.setLineDash([]);
+      }
     }
   }, []);
 
@@ -569,10 +599,18 @@ export function Canvas2D() {
       endStroke();
       return;
     }
-    if (getTool() === 'rect') {
-      // Rect-fill sub-tool — works in both paint and height modes.
-      // The rect lives in cell-coords and is drawn as an overlay every
-      // frame; the actual fill (paint or height) runs on mouseup.
+    if (getMode() === 'copy' && getTool() === 'paste') {
+      // Single click pastes the clipboard with the clicked cell as the
+      // top-left anchor of the destination. No-op if clipboard empty.
+      const { col, row } = cellFromEvent(e);
+      pasteAt(col, row);
+      endStroke();
+      return;
+    }
+    if (getTool() === 'rect' || (getMode() === 'copy' && getTool() === 'copy')) {
+      // Rect drag — same gesture for paint/height rect-fill AND for
+      // the copy-mode source selection. Which action runs on release
+      // is decided by mode + tool in onMouseUp.
       const { col, row } = cellFromEvent(e);
       dragRef.current.active = 'rect';
       dragRef.current.rectStart = { col, row };
@@ -642,6 +680,18 @@ export function Canvas2D() {
       }
       return;
     }
+    // Copy-mode paste hover: draw a preview rect at the cursor sized
+    // by the clipboard. Skip the redraw when the cursor stays inside
+    // the same cell to keep this cheap.
+    if (getMode() === 'copy' && getTool() === 'paste') {
+      const { col, row } = cellFromEvent(e);
+      const prev = pasteHoverRef.current;
+      if (!prev || prev.col !== col || prev.row !== row) {
+        pasteHoverRef.current = { col, row };
+        draw();
+      }
+      return;
+    }
     if (dragRef.current.active !== 'paint') return;
     const { col, row } = cellFromEvent(e);
     const key = `${col},${row}`;
@@ -665,8 +715,11 @@ export function Canvas2D() {
       if (a && b) {
         // The semantics of releasing the rect depend on the active
         // mode: in paint we drop the current brush across the cells,
-        // in height we set them all to the user-defined target.
-        if (getMode() === 'height') {
+        // in height we set them all to the user-defined target, in
+        // copy we snapshot the cells into the clipboard.
+        if (getMode() === 'copy') {
+          copyRect(a.col, a.row, b.col, b.row);
+        } else if (getMode() === 'height') {
           fillRectHeight(a.col, a.row, b.col, b.row, getRectTargetH());
         } else {
           fillRect(a.col, a.row, b.col, b.row);

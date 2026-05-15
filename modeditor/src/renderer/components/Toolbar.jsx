@@ -7,6 +7,7 @@ import {
   getTool, setTool,
   getHeightDelta, setHeightDelta,
   getRectTargetH, setRectTargetH,
+  getClipboard, clearClipboard,
   resetMap,
   getTilemap,
   clearPlayArea, setPlayAreaRestrict, setPlayAreaStrict,
@@ -19,7 +20,14 @@ const MODE_TABS = [
   { id: 'paint',  label: 'Pintar', icon: 'tint' },
   { id: 'height', label: 'Altura', icon: 'mountain' },
   { id: 'area',   label: 'Área',   icon: 'selection' },
+  { id: 'copy',   label: 'Copia',  icon: 'duplicate' },
   { id: '3d',     label: '3D',     icon: 'cube' },
+];
+
+// --- copy sub-tools (shown in the Copia ribbon) ---
+const COPY_TOOLS = [
+  { id: 'copy',  label: 'Copiar', icon: 'duplicate' },
+  { id: 'paste', label: 'Pegar',  icon: 'clipboard' },
 ];
 
 // --- paint sub-tools (shown in the Pintar ribbon) ---
@@ -73,6 +81,7 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
   const tool = useStore(() => getTool());
   const heightDelta = useStore(() => getHeightDelta());
   const rectTargetH = useStore(() => getRectTargetH());
+  const clipboard = useStore(() => getClipboard());
   const tilemap = useStore(() => getTilemap());
 
   return (
@@ -182,6 +191,42 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
                 <MiniNumber value={heightDelta} min={1} onCommit={setHeightDelta} />
               </div>
             )}
+          </>
+        )}
+
+        {mode === 'copy' && (
+          <>
+            <ButtonGroup>
+              {COPY_TOOLS.map(t => (
+                <Button
+                  key={t.id}
+                  icon={t.icon}
+                  active={tool === t.id}
+                  // Pegar requires something in the clipboard.
+                  disabled={t.id === 'paste' && !clipboard}
+                  onClick={() => setTool(t.id)}
+                >
+                  {t.label}
+                </Button>
+              ))}
+            </ButtonGroup>
+            {clipboard ? (
+              <>
+                <span className="ribbon-text">
+                  {`Portapapeles: ${clipboard.cols}×${clipboard.rows} celdas`}
+                </span>
+                <Button icon="trash" small onClick={clearClipboard}>
+                  Vaciar
+                </Button>
+              </>
+            ) : (
+              <span className="ribbon-hint">Portapapeles vacío.</span>
+            )}
+            <span className="ribbon-hint">
+              {tool === 'copy'
+                ? 'Arrastra para copiar la región (altura + textura + objetos).'
+                : 'Click para pegar el portapapeles usando el cursor como esquina superior izquierda.'}
+            </span>
           </>
         )}
 

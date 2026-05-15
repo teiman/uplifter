@@ -15,10 +15,11 @@ import {
 const state = {
   tilemap: makeEmptyTilemap(),
   selectedBrushIdx: 0,       // index into BRUSH_PALETTE
-  mode: 'paint',             // 'paint' | 'height' | 'area' | '3d'
+  mode: 'paint',             // 'paint' | 'height' | 'area' | 'copy' | '3d'
   tool: 'paint',             // when mode='paint':  'paint' | 'rect' | 'bucket'
                              // when mode='height': 'raise'|'lower'|'smooth'|'extend'|'rect'
                              // when mode='area':   always 'area' (no sub-tools)
+                             // when mode='copy':   'copy' | 'paste'
                              // when mode='3d':     'perspective' | 'iso'
                              //
                              // 'rect' is a drag-rectangle sub-tool that
@@ -42,6 +43,10 @@ const state = {
   // via the ribbon input. Applied to every cell inside the dragged
   // rectangle on mouseup.
   rectTargetH: 1,
+  // Clipboard for the copy/paste mode. null = nothing copied yet.
+  // Shape: { cols, rows, heights: Int16Array, textures: Int8Array,
+  //          objects: Array(cols*rows), smoothing: Array(cols*rows) }
+  clipboard: null,
   // Iso view yaw index: 0..3, mapped to 45°, 135°, 225°, 315°. Lets
   // the user rotate the isometric camera in 90° steps while keeping
   // the same focus point. Persisted so re-entering the iso tool
@@ -136,6 +141,7 @@ export function getTool()           { return state.tool; }
 export function getView()           { return state.mode === '3d' ? '3d' : '2d'; }
 export function getHeightDelta()    { return state.heightDelta; }
 export function getRectTargetH()    { return state.rectTargetH; }
+export function getClipboard()      { return state.clipboard; }
 export function getIsoYawIdx()      { return state.isoYawIdx; }
 
 /** Rotate the iso camera by ±1 step (90° each). The view stays focused
@@ -152,7 +158,7 @@ export function setBrushIdx(idx) {
   notify();
 }
 
-const VALID_MODES = new Set(['paint', 'height', 'area', '3d']);
+const VALID_MODES = new Set(['paint', 'height', 'area', 'copy', '3d']);
 
 /**
  * Switch the top-level mode. Resets the sub-tool to the mode's default:
@@ -194,6 +200,7 @@ export function setMode(mode) {
   state.tool = (mode === 'paint')  ? 'paint'
              : (mode === 'height') ? 'raise'
              : (mode === 'area')   ? 'area'
+             : (mode === 'copy')   ? 'copy'
              : (mode === '3d')     ? 'iso'
              :                       'paint';
   notify();
@@ -502,6 +509,95 @@ export function fillRectHeight(c0, r0, c1, r1, targetH) {
   }
   if (anyChanged) notify();
   return anyChanged;
+}
+
+/**
+ * Copy/paste clipboard for the 'copy' mode.
+ *
+ * copyRect snapshots heights + textures + objects + smoothing for the
+ * inclusive cell rectangle (any corner ordering). Objects are
+ * deep-cloned so editing the live tilemap after a copy can't mutate
+ * the clipboard. pasteAt drops the clipboard at (col, row) as the
+ * top-left anchor, clipping at the tilemap edges.
+ */
+export function copyRect(c0, r0, c1, r1) {
+  const t = state.tilemap;
+  const cMin = Math.max(0, Math.min(c0, c1));
+  const cMax = Math.min(t.cols - 1, Math.max(c0, c1));
+  const rMin = Math.max(0, Math.min(r0, r1));
+  const rMax = Math.min(t.rows - 1, Math.max(r0, r1));
+  const cw = cMax - cMin + 1;
+  const ch = rMax - rMin + 1;
+  if (cw <= 0 || ch <= 0) return false;
+  const heights   = new Int16Array(cw * ch);
+  const textures  = new Int8Array (cw * ch);
+  const objects   = new Array(cw * ch).fill(null);
+  const smoothing = new Array(cw * ch).fill(null);
+  for (let r = 0; r < ch; r++) {
+    for (let c = 0; c < cw; c++) {
+      const src = (rMin + r) * t.cols + (cMin + c);
+      const dst = r * cw + c;
+      heights[dst]  = t.heights[src];
+      textures[dst] = t.textures[src];
+      const so = t.objects[src];
+      objects[dst]  = so ? { ...so } : null;
+      smoothing[dst] = t.smoothing ? t.smoothing[src] : null;
+    }
+  }
+  state.clipboard = { cols: cw, rows: ch, heights, textures, objects, smoothing };
+  notify();
+  return true;
+}
+
+export function pasteAt(col, row) {
+  const cb = state.clipboard;
+  if (!cb) return false;
+  const t = state.tilemap;
+  let anyChanged = false;
+  for (let r = 0; r < cb.rows; r++) {
+    for (let c = 0; c < cb.cols; c++) {
+      const dc = col + c;
+      const dr = row + r;
+      if (dc < 0 || dc >= t.cols || dr < 0 || dr >= t.rows) continue;
+      const src = r * cb.cols + c;
+      const dst = dr * t.cols + dc;
+      let cellChanged = false;
+      if (t.heights[dst] !== cb.heights[src]) {
+        t.heights[dst] = cb.heights[src];
+        cellChanged = true;
+      }
+      if (t.textures[dst] !== cb.textures[src]) {
+        t.textures[dst] = cb.textures[src];
+        cellChanged = true;
+      }
+      const srcObj = cb.objects[src];
+      // Object comparison: shallow-equal on (kind, storeys); cheaper
+      // than a full deep diff and covers all the fields we care about.
+      const dstObj = t.objects[dst];
+      const objSame = !srcObj && !dstObj
+        || (srcObj && dstObj && srcObj.kind === dstObj.kind && srcObj.storeys === dstObj.storeys);
+      if (!objSame) {
+        t.objects[dst] = srcObj ? { ...srcObj } : null;
+        cellChanged = true;
+      }
+      if (t.smoothing && t.smoothing[dst] !== cb.smoothing[src]) {
+        t.smoothing[dst] = cb.smoothing[src];
+        cellChanged = true;
+      }
+      if (cellChanged) {
+        markChunkDirty(dc, dr);
+        anyChanged = true;
+      }
+    }
+  }
+  if (anyChanged) notify();
+  return anyChanged;
+}
+
+/** Drop the clipboard. UI surface mostly for clarity. */
+export function clearClipboard() {
+  state.clipboard = null;
+  notify();
 }
 
 /**
