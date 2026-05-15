@@ -155,13 +155,13 @@ export function pickFaceTextures(k, total, neighborMax, biomeTex) {
 // still painted from this palette — the global water brush sits above
 // it.
 export const PALETTE = [
-  { id: 'tierra',           label: 'Tierra',        tex: texturesFor('tierra'),         color: '#7a5a3a' },
-  { id: 'arena',            label: 'Arena',         tex: texturesFor('arena'),          color: '#d9c47a' },
-  { id: 'road-up',          label: 'Road ↑',        tex: texturesFor('road-up'),        color: '#444444' },
-  { id: 'road-down-left',   label: 'Road ↙',        tex: texturesFor('road-down-left'), color: '#555555' },
-  { id: 'road-x',           label: 'Road ✕',        tex: texturesFor('road-x'),         color: '#3a3a3a' },
-  { id: 'metal',            label: 'Metal',         tex: texturesFor('metal'),          color: '#6b6b78' },
-  { id: 'plaza',            label: 'Plaza',         tex: texturesFor('plaza'),          color: '#a8a89a' },
+  { id: 'tierra',  label: 'Tierra', tex: texturesFor('tierra'),  color: '#7a5a3a' },
+  { id: 'arena',   label: 'Arena',  tex: texturesFor('arena'),   color: '#d9c47a' },
+  { id: 'road-up', label: 'Road ↑', tex: texturesFor('road-up'), color: '#444444' },
+  { id: 'road-dl', label: 'Road ↙', tex: texturesFor('road-dl'), color: '#555555' },
+  { id: 'road-x',  label: 'Road ✕', tex: texturesFor('road-x'),  color: '#3a3a3a' },
+  { id: 'metal',   label: 'Metal',  tex: texturesFor('metal'),   color: '#6b6b78' },
+  { id: 'plaza',   label: 'Plaza',  tex: texturesFor('plaza'),   color: '#a8a89a' },
 ];
 
 /**
@@ -183,10 +183,10 @@ export const PALETTE = [
  *   - light: optional point light spec emitted with the brush.
  */
 export const SPECIAL_OBJECTS = [
-  { kind: 'casa',        label: 'Casa',        glyph: '⌂', color: '#c08c4a',
+  { kind: 'casa',  label: 'Casa',        glyph: '⌂', color: '#c08c4a',
     footprint: 1, isBuilding: true, tex: texturesFor('casa') },
-  { kind: 'rascacielos', label: 'Rascacielos', glyph: '▮', color: '#8888a0',
-    footprint: 1, isBuilding: true, tex: texturesFor('rascacielos') },
+  { kind: 'tower', label: 'Rascacielos', glyph: '▮', color: '#8888a0',
+    footprint: 1, isBuilding: true, tex: texturesFor('tower') },
   { kind: 'lampara',     label: 'Lámpara',     glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
@@ -258,6 +258,19 @@ export function isWaterCell(tilemap, idx) {
   return tilemap.heights[idx] < SEA_LEVEL_H;
 }
 
+/** Map of legacy object kinds → current kinds, applied on load. */
+const KIND_ALIASES = { rascacielos: 'tower' };
+
+function migrateObjects(objects) {
+  for (let i = 0; i < objects.length; i++) {
+    const o = objects[i];
+    if (o && KIND_ALIASES[o.kind]) {
+      objects[i] = { ...o, kind: KIND_ALIASES[o.kind] };
+    }
+  }
+  return objects;
+}
+
 /** Reconstruct a TilemapData from a serialised plain object (typed
  *  arrays come back as regular arrays). Tolerant of older snapshots
  *  that lack newer fields (objects, smoothing, patrols, etc.). */
@@ -278,7 +291,10 @@ export function deserialiseTilemap(o) {
     cellSize: o.cellSize ?? CELL_SIZE,
     textures,
     heights,
-    objects:   o.objects   ?? new Array(N).fill(null),
+    // Migrate legacy object kinds renamed for shorter Quake texture
+    // names: 'rascacielos' → 'tower'. Saved maps from before the
+    // rename keep working without manual fix-up.
+    objects:   migrateObjects(o.objects ?? new Array(N).fill(null)),
     smoothing: o.smoothing ?? new Array(N).fill(null),
     patrols:   o.patrols   ?? [],
     spawn:     o.spawn     ?? null,

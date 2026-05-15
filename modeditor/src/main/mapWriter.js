@@ -253,7 +253,7 @@ function buildMapText({ tilemap, wadKey }) {
       const objMeta = obj ? OBJECT_BY_KIND.get(obj.kind) : null;
       const isBuilding = objMeta && objMeta.isBuilding;
       const buildingBiomeTex = isBuilding ? objMeta.tex : null;
-      const isSkyscraper = isBuilding && obj.kind === 'rascacielos';
+      const isSkyscraper = isBuilding && obj.kind === 'tower';
 
       const x0 = -gridHalfX + col * cellSize;
       const x1 = x0 + cellSize;

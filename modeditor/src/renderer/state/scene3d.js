@@ -161,7 +161,7 @@ function addCellToMesh(out, tilemap, col, row, gridHalfX, gridHalfY) {
   const meta = obj ? OBJECT_BY_KIND.get(obj.kind) : null;
   const isBuilding = meta && meta.isBuilding;
   const buildingColors = isBuilding ? OBJECT_COLORS.get(obj.kind) : null;
-  const isSkyscraper = isBuilding && obj.kind === 'rascacielos';
+  const isSkyscraper = isBuilding && obj.kind === 'tower';
 
   // Cell footprint in world coords.
   const x0 = -gridHalfX + col * CELL_SIZE;

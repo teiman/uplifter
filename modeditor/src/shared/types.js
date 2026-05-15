@@ -126,21 +126,21 @@ function pickFaceTextures(k, total, neighborMax, biomeTex) {
 /** Ordered list of palette entries for the UI. Each entry carries its
  *  5-face Quake texture set (`tex`); see column.md for the layout. */
 const PALETTE = [
-  { id: 'tierra',           label: 'Tierra',        tex: texturesFor('tierra'),         color: '#7a5a3a' },
-  { id: 'arena',            label: 'Arena',         tex: texturesFor('arena'),          color: '#d9c47a' },
-  { id: 'road-up',          label: 'Road ↑',        tex: texturesFor('road-up'),        color: '#444444' },
-  { id: 'road-down-left',   label: 'Road ↙',        tex: texturesFor('road-down-left'), color: '#555555' },
-  { id: 'road-x',           label: 'Road ✕',        tex: texturesFor('road-x'),         color: '#3a3a3a' },
-  { id: 'metal',            label: 'Metal',         tex: texturesFor('metal'),          color: '#6b6b78' },
-  { id: 'plaza',            label: 'Plaza',         tex: texturesFor('plaza'),          color: '#a8a89a' },
+  { id: 'tierra',  label: 'Tierra', tex: texturesFor('tierra'),  color: '#7a5a3a' },
+  { id: 'arena',   label: 'Arena',  tex: texturesFor('arena'),   color: '#d9c47a' },
+  { id: 'road-up', label: 'Road ↑', tex: texturesFor('road-up'), color: '#444444' },
+  { id: 'road-dl', label: 'Road ↙', tex: texturesFor('road-dl'), color: '#555555' },
+  { id: 'road-x',  label: 'Road ✕', tex: texturesFor('road-x'),  color: '#3a3a3a' },
+  { id: 'metal',   label: 'Metal',  tex: texturesFor('metal'),   color: '#6b6b78' },
+  { id: 'plaza',   label: 'Plaza',  tex: texturesFor('plaza'),   color: '#a8a89a' },
 ];
 
 /** Special objects placed in a cell. See types.mjs for the field spec. */
 const SPECIAL_OBJECTS = [
-  { kind: 'casa',        label: 'Casa',        glyph: '⌂', color: '#c08c4a',
+  { kind: 'casa',  label: 'Casa',        glyph: '⌂', color: '#c08c4a',
     footprint: 1, isBuilding: true, tex: texturesFor('casa') },
-  { kind: 'rascacielos', label: 'Rascacielos', glyph: '▮', color: '#8888a0',
-    footprint: 1, isBuilding: true, tex: texturesFor('rascacielos') },
+  { kind: 'tower', label: 'Rascacielos', glyph: '▮', color: '#8888a0',
+    footprint: 1, isBuilding: true, tex: texturesFor('tower') },
   { kind: 'lampara',     label: 'Lámpara',     glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
@@ -225,12 +225,28 @@ function serialiseTilemap(t) {
   };
 }
 
+/** Map of legacy object kinds → current kinds. Applied at load time so
+ *  saved maps from before a rename keep working. */
+const KIND_ALIASES = { rascacielos: 'tower' };
+
+function migrateObjects(objects) {
+  if (!Array.isArray(objects)) return objects;
+  for (let i = 0; i < objects.length; i++) {
+    const o = objects[i];
+    if (o && KIND_ALIASES[o.kind]) {
+      objects[i] = { ...o, kind: KIND_ALIASES[o.kind] };
+    }
+  }
+  return objects;
+}
+
 /** Inverse of serialiseTilemap — reattach typed arrays. */
 function deserialiseTilemap(o) {
   return {
     ...o,
     textures: Int8Array.from(o.textures),
     heights: Int16Array.from(o.heights),
+    objects: migrateObjects(o.objects),
   };
 }
 
