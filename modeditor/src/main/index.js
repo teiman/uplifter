@@ -51,6 +51,41 @@ async function listWads() {
   }
 }
 
+/**
+ * Regenerate the runtime-managed WAD files (auto.wad + textures.wad).
+ * Both are no-ops on the fast path: auto.wad is cheap to rewrite,
+ * textures.wad compares mtimes against the manifest and skips when
+ * nothing has changed. Called at app launch AND before every compile,
+ * so editing a PNG and hitting Compile picks up the change without
+ * restarting the app.
+ *
+ * `send` is the compile-log forwarder; when provided, the rebuilt
+ * textures.wad event surfaces in the editor's log panel.
+ */
+async function refreshAutoWads(send) {
+  try {
+    await ensureAutoWad(path.join(WADS_DIR, 'auto.wad'));
+  } catch (err) {
+    console.error('[auto.wad]', err);
+    if (send) send({ stream: 'meta', tool: 'auto.wad', line: `ERROR: ${err.message}` });
+  }
+  try {
+    const r = await ensureTexturesWad(
+      TEXTURES_SRC_DIR,
+      path.join(WADS_DIR, 'textures.wad'),
+      path.join(TMP_DIR, 'textures.wad.manifest.json'),
+    );
+    if (r.rebuilt) {
+      const msg = `rebuilt textures.wad with ${r.count} miptexes`;
+      console.log(`[textures.wad] ${msg}`);
+      if (send) send({ stream: 'meta', tool: 'textures.wad', line: msg });
+    }
+  } catch (err) {
+    console.error('[textures.wad]', err);
+    if (send) send({ stream: 'meta', tool: 'textures.wad', line: `ERROR: ${err.message}` });
+  }
+}
+
 function registerIpc(getWindow) {
   ipcMain.handle('app:ping', async () => ({
     pong: true,
@@ -135,6 +170,11 @@ function registerIpc(getWindow) {
     };
     const startedAt = Date.now();
     try {
+      // Pick up any art edits that happened since the app started.
+      // refreshAutoWads is a no-op on the fast path (manifest hits)
+      // so this only costs anything when the user actually changed
+      // a PNG. listWads() below will see the freshly-written WADs.
+      await refreshAutoWads(send);
       const t = deserialiseTilemap(tilemap);
       const wads = await listWads();
       const wadKey = wadKeyFromPaths(wads);
@@ -195,31 +235,7 @@ function registerIpc(getWindow) {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
-  // Regenerate the synthetic auto.wad on every launch. It carries the
-  // textures the editor needs but the user's WADs don't ship — currently
-  // sky_auto (used for the world's sky box) and a few internal helpers.
-  // Writing on each launch keeps the file in sync if wadWriter.js
-  // changes.
-  try {
-    await ensureAutoWad(path.join(WADS_DIR, 'auto.wad'));
-  } catch (err) {
-    console.error('[startup] auto.wad write failed:', err);
-  }
-  // Rebuild textures.wad if any PNG under assets/textures/<biome>/ has
-  // been added, removed, or modified since the last launch. Manifest of
-  // (rel path → mtimeMs) lives next to the WAD; if it matches the
-  // current scan AND the WAD file exists, we skip — typical startup is
-  // a no-op.
-  try {
-    const r = await ensureTexturesWad(
-      TEXTURES_SRC_DIR,
-      path.join(WADS_DIR, 'textures.wad'),
-      path.join(TMP_DIR, 'textures.wad.manifest.json'),
-    );
-    if (r.rebuilt) console.log(`[startup] rebuilt textures.wad with ${r.count} miptexes`);
-  } catch (err) {
-    console.error('[startup] textures.wad write failed:', err);
-  }
+  await refreshAutoWads();
   let mainWindow = createMainWindow();
   registerIpc(() => mainWindow);
   app.on('activate', () => {
