@@ -1,0 +1,13 @@
+{
+  "name": "quake-palettes",
+  "displayName": "Quake palettes",
+  "description": "Standard Quake 1 palette + a no-fullbrights variant.",
+  "version": "1.0.0",
+  "author": { "name": "Uplifter ModEditor" },
+  "contributes": {
+    "palettes": [
+      { "id": "quake",       "path": "./palettes/quake.gpl" },
+      { "id": "quake-no-fb", "path": "./palettes/quake-no-fb.gpl" }
+    ]
+  }
+}

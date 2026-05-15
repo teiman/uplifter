@@ -1,0 +1,260 @@
+GIMP Palette
+Name: Quake
+Columns: 16
+#
+  0   0   0	quake-000
+ 15  15  15	quake-001
+ 31  31  31	quake-002
+ 47  47  47	quake-003
+ 63  63  63	quake-004
+ 75  75  75	quake-005
+ 91  91  91	quake-006
+107 107 107	quake-007
+123 123 123	quake-008
+139 139 139	quake-009
+155 155 155	quake-010
+171 171 171	quake-011
+187 187 187	quake-012
+203 203 203	quake-013
+219 219 219	quake-014
+235 235 235	quake-015
+ 15  11   7	quake-016
+ 23  15  11	quake-017
+ 31  23  11	quake-018
+ 39  27  15	quake-019
+ 47  35  19	quake-020
+ 55  43  23	quake-021
+ 63  47  23	quake-022
+ 75  55  27	quake-023
+ 83  59  27	quake-024
+ 91  67  31	quake-025
+ 99  75  31	quake-026
+107  83  31	quake-027
+115  87  31	quake-028
+123  95  35	quake-029
+131 103  35	quake-030
+143 111  35	quake-031
+ 11  11  15	quake-032
+ 19  19  27	quake-033
+ 27  27  39	quake-034
+ 39  39  51	quake-035
+ 47  47  63	quake-036
+ 55  55  75	quake-037
+ 63  63  87	quake-038
+ 71  71 103	quake-039
+ 79  79 115	quake-040
+ 91  91 127	quake-041
+ 99  99 139	quake-042
+107 107 151	quake-043
+115 115 163	quake-044
+123 123 175	quake-045
+131 131 187	quake-046
+139 139 203	quake-047
+  0   0   0	quake-048
+  7   7   0	quake-049
+ 11  11   0	quake-050
+ 19  19   0	quake-051
+ 27  27   0	quake-052
+ 35  35   0	quake-053
+ 43  43   7	quake-054
+ 47  47   7	quake-055
+ 55  55   7	quake-056
+ 63  63   7	quake-057
+ 71  71   7	quake-058
+ 75  75  11	quake-059
+ 83  83  11	quake-060
+ 91  91  11	quake-061
+ 99  99  11	quake-062
+107 107  15	quake-063
+  7   0   0	quake-064
+ 15   0   0	quake-065
+ 23   0   0	quake-066
+ 31   0   0	quake-067
+ 39   0   0	quake-068
+ 47   0   0	quake-069
+ 55   0   0	quake-070
+ 63   0   0	quake-071
+ 71   0   0	quake-072
+ 79   0   0	quake-073
+ 87   0   0	quake-074
+ 95   0   0	quake-075
+103   0   0	quake-076
+111   0   0	quake-077
+119   0   0	quake-078
+127   0   0	quake-079
+ 19  19   0	quake-080
+ 27  27   0	quake-081
+ 35  35   0	quake-082
+ 47  43   0	quake-083
+ 55  47   0	quake-084
+ 67  55   0	quake-085
+ 75  59   7	quake-086
+ 87  67   7	quake-087
+ 95  71   7	quake-088
+107  75  11	quake-089
+119  83  15	quake-090
+131  87  19	quake-091
+139  91  19	quake-092
+151  95  27	quake-093
+163  99  31	quake-094
+175 103  35	quake-095
+ 35  19   7	quake-096
+ 47  23  11	quake-097
+ 59  31  15	quake-098
+ 75  35  19	quake-099
+ 87  43  23	quake-100
+ 99  47  31	quake-101
+115  55  35	quake-102
+127  59  43	quake-103
+143  67  51	quake-104
+159  79  51	quake-105
+175  99  47	quake-106
+191 119  47	quake-107
+207 143  43	quake-108
+223 171  39	quake-109
+239 203  31	quake-110
+255 243  27	quake-111
+ 11   7   0	quake-112
+ 27  19   0	quake-113
+ 43  35  15	quake-114
+ 55  43  19	quake-115
+ 71  51  27	quake-116
+ 83  55  35	quake-117
+ 99  63  43	quake-118
+111  71  51	quake-119
+127  83  63	quake-120
+139  95  71	quake-121
+155 107  83	quake-122
+167 123  95	quake-123
+183 135 107	quake-124
+195 147 123	quake-125
+211 163 139	quake-126
+227 179 151	quake-127
+171 139 163	quake-128
+159 127 151	quake-129
+147 115 135	quake-130
+139 103 123	quake-131
+127  91 111	quake-132
+119  83  99	quake-133
+107  75  87	quake-134
+ 95  63  75	quake-135
+ 87  55  67	quake-136
+ 75  47  55	quake-137
+ 67  39  47	quake-138
+ 55  31  35	quake-139
+ 43  23  27	quake-140
+ 35  19  19	quake-141
+ 23  11  11	quake-142
+ 15   7   7	quake-143
+187 115 159	quake-144
+175 107 143	quake-145
+163  95 131	quake-146
+151  87 119	quake-147
+139  79 107	quake-148
+127  75  95	quake-149
+115  67  83	quake-150
+107  59  75	quake-151
+ 95  51  63	quake-152
+ 83  43  55	quake-153
+ 71  35  43	quake-154
+ 59  31  35	quake-155
+ 47  23  27	quake-156
+ 35  19  19	quake-157
+ 23  11  11	quake-158
+ 15   7   7	quake-159
+219 195 187	quake-160
+203 179 167	quake-161
+191 163 155	quake-162
+175 151 139	quake-163
+163 135 123	quake-164
+151 123 111	quake-165
+135 111  95	quake-166
+123  99  83	quake-167
+107  87  71	quake-168
+ 95  75  59	quake-169
+ 83  63  51	quake-170
+ 67  51  39	quake-171
+ 55  43  31	quake-172
+ 39  31  23	quake-173
+ 27  19  15	quake-174
+ 15  11   7	quake-175
+111 131 123	quake-176
+103 123 111	quake-177
+ 95 115 103	quake-178
+ 87 107  95	quake-179
+ 79  99  87	quake-180
+ 71  91  79	quake-181
+ 63  83  71	quake-182
+ 55  75  63	quake-183
+ 47  67  55	quake-184
+ 43  59  47	quake-185
+ 35  51  39	quake-186
+ 31  43  31	quake-187
+ 23  35  23	quake-188
+ 15  27  19	quake-189
+ 11  19  11	quake-190
+  7  11   7	quake-191
+255 243  27	quake-192
+239 223  23	quake-193
+219 203  19	quake-194
+203 183  15	quake-195
+187 167  15	quake-196
+171 151  11	quake-197
+155 131   7	quake-198
+139 115   7	quake-199
+123  99   7	quake-200
+107  83   0	quake-201
+ 91  71   0	quake-202
+ 75  55   0	quake-203
+ 59  43   0	quake-204
+ 43  31   0	quake-205
+ 27  15   0	quake-206
+ 11   7   0	quake-207
+  0   0 255	quake-208
+ 11  11 239	quake-209
+ 19  19 223	quake-210
+ 27  27 207	quake-211
+ 35  35 191	quake-212
+ 43  43 175	quake-213
+ 47  47 159	quake-214
+ 47  47 143	quake-215
+ 47  47 127	quake-216
+ 47  47 111	quake-217
+ 47  47  95	quake-218
+ 43  43  79	quake-219
+ 35  35  63	quake-220
+ 27  27  47	quake-221
+ 19  19  31	quake-222
+ 11  11  15	quake-223
+ 43   0   0	quake-224
+ 59   0   0	quake-225
+ 75   7   0	quake-226
+ 95   7   0	quake-227
+111  15   0	quake-228
+127  23   7	quake-229
+147  31   7	quake-230
+163  39  11	quake-231
+183  51  15	quake-232
+195  75  27	quake-233
+207  99  43	quake-234
+219 127  59	quake-235
+227 151  79	quake-236
+231 171  95	quake-237
+239 191 119	quake-238
+247 211 139	quake-239
+167 123  59	quake-240
+183 155  55	quake-241
+199 195  55	quake-242
+231 227  87	quake-243
+127 191 255	quake-244
+171 231 255	quake-245
+215 255 255	quake-246
+103   0   0	quake-247
+139   0   0	quake-248
+179   0   0	quake-249
+215   0   0	quake-250
+255   0   0	quake-251
+255 243 147	quake-252
+255 247 199	quake-253
+255 255 255	quake-254
+159  91  83	quake-255
