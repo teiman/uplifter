@@ -1,0 +1,32 @@
+{
+  "id": "027",
+  "cubes": 39,
+  "decorations": [
+    {
+      "row": 2,
+      "col": 2,
+      "kind": "ramp",
+      "dir": 0
+    },
+    {
+      "row": 1,
+      "col": 0,
+      "kind": "ramp",
+      "dir": 0
+    },
+    {
+      "row": 2,
+      "col": 1,
+      "kind": "corner_out",
+      "dir": 0
+    },
+    {
+      "row": 1,
+      "col": 1,
+      "kind": "corner_in",
+      "dir": 0
+    }
+  ],
+  "quality": "good",
+  "updatedAt": "2026-05-16T18:59:02.348Z"
+}

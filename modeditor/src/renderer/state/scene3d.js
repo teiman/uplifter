@@ -26,7 +26,24 @@ import {
   HOUSE_STOREYS_MIN, HOUSE_STOREYS_MAX,
   MESH_CHUNK_SIZE,
   pickFaceTextures,
+  decodeDeco,
 } from '../../shared/types.mjs';
+
+/**
+ * Mapea un (kind, dir) de preparacion_iso a la direccion de pushWedge
+ * (tetraedro con esquina alta). Encajan aqui:
+ *   - `ramp` (cuña cardinal)
+ *   - `corner_out` (pico unico)
+ *   - `ramp_diag` (rampa diagonal — misma geometria que corner_out
+ *     cuando se aplica Erosion sobre un heightmap)
+ * Solo `corner_in` usa geometria distinta (pushCornerIn).
+ */
+function kindToRampDirection(kind, dir) {
+  if (kind === 'ramp') return ['n','e','s','w'][dir] || null;
+  if (kind === 'corner_out' || kind === 'ramp_diag')
+    return ['ne','se','sw','nw'][dir] || null;
+  return null;
+}
 
 export const SKY_COLOR = [0.47, 0.71, 0.90];
 const WATER_COLOR    = [0.18, 0.40, 0.62];
@@ -97,6 +114,273 @@ function finaliseBuilder(b) {
  *           { top, side, bottom } with one [r,g,b] per face group.
  *           Side colour is shared across the 4 lateral faces.
  */
+/**
+ * Empuja un triangulo al buffer (helper para wedges/tetraedros donde no
+ * todas las caras son quads).
+ */
+function pushTri(out, p1, p2, p3, n, rgb) {
+  const base = out.vertexCount;
+  for (const [px, py, pz] of [p1, p2, p3]) {
+    out.positions.push(px, py, pz);
+    out.normals.push(n[0], n[1], n[2]);
+    out.colors.push(rgb[0], rgb[1], rgb[2]);
+    out.vertexCount++;
+  }
+  out.indices.push(base, base + 1, base + 2);
+}
+
+function pushQuad(out, p1, p2, p3, p4, n, rgb) {
+  const base = out.vertexCount;
+  for (const [px, py, pz] of [p1, p2, p3, p4]) {
+    out.positions.push(px, py, pz);
+    out.normals.push(n[0], n[1], n[2]);
+    out.colors.push(rgb[0], rgb[1], rgb[2]);
+    out.vertexCount++;
+  }
+  out.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+}
+
+// Normaliza un vector 3D. Si nulo, devuelve [0,0,1].
+function _normalize(v) {
+  const m = Math.hypot(v[0], v[1], v[2]);
+  if (m === 0) return [0, 0, 1];
+  return [v[0]/m, v[1]/m, v[2]/m];
+}
+
+// Normal del plano que pasa por 3 puntos (CCW desde fuera).
+function _triNormal(p1, p2, p3) {
+  const u = [p2[0]-p1[0], p2[1]-p1[1], p2[2]-p1[2]];
+  const v = [p3[0]-p1[0], p3[1]-p1[1], p3[2]-p1[2]];
+  return _normalize([
+    u[1]*v[2] - u[2]*v[1],
+    u[2]*v[0] - u[0]*v[2],
+    u[0]*v[1] - u[1]*v[0],
+  ]);
+}
+
+/**
+ * Emite una cuña (rampa) en (x0,y0,z0)-(x1,y1,z1) con la cresta alta
+ * indicada por `direction`. Misma convencion que rampBrush de atlasmaper:
+ *   'n' → arista N alta (y=y1), 's' → arista S alta (y=y0),
+ *   'e' → arista E alta (x=x1), 'w' → arista O alta (x=x0).
+ *   'ne'/'nw'/'se'/'sw' → esquina diagonal alta (tetraedro).
+ * Las caras CCW vistas desde fuera del solido.
+ */
+/**
+ * Brush "corner_in" (3 esquinas altas, 1 baja) en la celda. Geometria
+ * inversa al tetraedro de corner_out: cubo lleno con la esquina opuesta
+ * a `dir` recortada por un plano de clip diagonal.
+ *
+ * dir indica la esquina ALTA puntiaguda (la opuesta a la cortada):
+ *   0 = NE alto, SO baja.
+ *   1 = SE alto, NO baja.
+ *   2 = SO alto, NE baja.
+ *   3 = NO alto, SE baja.
+ *
+ * Convencion mundo (igual que mapWriter): +Y norte, +X este.
+ *   NW=(x0,y1), NE=(x1,y1), SE=(x1,y0), SO=(x0,y0).
+ */
+function pushCornerIn(out, x0, y0, z0, x1, y1, z1, dir, colors) {
+  const topRgb    = Array.isArray(colors) ? colors : colors.top    ?? colors.side;
+  const sideRgb   = Array.isArray(colors) ? colors : colors.side;
+  const bottomRgb = Array.isArray(colors) ? colors : colors.bottom ?? colors.side;
+  const NWb=[x0,y1,z0], NEb=[x1,y1,z0], SEb=[x1,y0,z0], SOb=[x0,y0,z0];
+  const NWt=[x0,y1,z1], NEt=[x1,y1,z1], SEt=[x1,y0,z1], SOt=[x0,y0,z1];
+  // 3 esquinas altas (forman la tapa triangular), 1 esquina baja cortada.
+  // alt1-alt3 en orden CCW desde arriba para que la normal apunte a +z.
+  // wallA/B = paredes completas adyacentes a alt2 (la esquina central).
+  // wallC/D = paredes triangulares adyacentes a lowB (la cortada).
+  let lowB, alt1, alt2, alt3;
+  let wallA_b1, wallA_b2, wallA_t1, wallA_t2;
+  let wallB_b1, wallB_b2, wallB_t1, wallB_t2;
+  let wallC_b, wallC_t, wallD_b, wallD_t;
+  let wallA_n, wallB_n, wallC_n, wallD_n;
+  if (dir === 0) {
+    // NE alto. Tapa NW-NE-SE. Baja SO.
+    lowB = SOb;
+    alt1 = NWt; alt2 = NEt; alt3 = SEt;
+    wallA_b1 = NWb; wallA_b2 = NEb; wallA_t1 = NEt; wallA_t2 = NWt; wallA_n = [0,1,0];
+    wallB_b1 = NEb; wallB_b2 = SEb; wallB_t1 = SEt; wallB_t2 = NEt; wallB_n = [1,0,0];
+    wallC_b = NWb; wallC_t = NWt; wallC_n = [-1,0,0];
+    wallD_b = SEb; wallD_t = SEt; wallD_n = [0,-1,0];
+  } else if (dir === 1) {
+    // SE alto. Tapa NE-SE-SO. Baja NW.
+    lowB = NWb;
+    alt1 = NEt; alt2 = SEt; alt3 = SOt;
+    wallA_b1 = NEb; wallA_b2 = SEb; wallA_t1 = SEt; wallA_t2 = NEt; wallA_n = [1,0,0];
+    wallB_b1 = SEb; wallB_b2 = SOb; wallB_t1 = SOt; wallB_t2 = SEt; wallB_n = [0,-1,0];
+    wallC_b = NEb; wallC_t = NEt; wallC_n = [0,1,0];
+    wallD_b = SOb; wallD_t = SOt; wallD_n = [-1,0,0];
+  } else if (dir === 2) {
+    // SO alto. Tapa SE-SO-NW. Baja NE.
+    lowB = NEb;
+    alt1 = SEt; alt2 = SOt; alt3 = NWt;
+    wallA_b1 = SEb; wallA_b2 = SOb; wallA_t1 = SOt; wallA_t2 = SEt; wallA_n = [0,-1,0];
+    wallB_b1 = SOb; wallB_b2 = NWb; wallB_t1 = NWt; wallB_t2 = SOt; wallB_n = [-1,0,0];
+    wallC_b = SEb; wallC_t = SEt; wallC_n = [1,0,0];
+    wallD_b = NWb; wallD_t = NWt; wallD_n = [0,1,0];
+  } else {
+    // NO alto. Tapa SO-NW-NE. Baja SE.
+    lowB = SEb;
+    alt1 = SOt; alt2 = NWt; alt3 = NEt;
+    wallA_b1 = SOb; wallA_b2 = NWb; wallA_t1 = NWt; wallA_t2 = SOt; wallA_n = [-1,0,0];
+    wallB_b1 = NWb; wallB_b2 = NEb; wallB_t1 = NEt; wallB_t2 = NWt; wallB_n = [0,1,0];
+    wallC_b = SOb; wallC_t = SOt; wallC_n = [0,-1,0];
+    wallD_b = NEb; wallD_t = NEt; wallD_n = [1,0,0];
+  }
+  // Centroide aproximado del solido (centro de la celda, sesgado hacia el
+  // techo alto). Sirve para orientar todas las caras hacia FUERA.
+  const cent = [(x0+x1)/2, (y0+y1)/2, z0 + (z1-z0)*0.75];
+  // Tapa triangular alta.
+  pushTriOriented(out, alt1, alt2, alt3, cent, topRgb);
+  // Cara inclinada: alt1-alt3 (hipotenusa) → lowB (esquina cortada en suelo).
+  pushTriOriented(out, alt1, alt3, lowB, cent, topRgb);
+  // Paredes completas adyacentes a alt2 (las que tocan los cubos altos).
+  pushQuadOriented(out, wallA_b1, wallA_b2, wallA_t1, wallA_t2, cent, sideRgb);
+  pushQuadOriented(out, wallB_b1, wallB_b2, wallB_t1, wallB_t2, cent, sideRgb);
+  // Paredes triangulares adyacentes a lowB (lado abierto).
+  pushTriOriented(out, lowB, wallC_b, wallC_t, cent, sideRgb);
+  pushTriOriented(out, lowB, wallD_t, wallD_b, cent, sideRgb);
+  // Base.
+  pushQuadOriented(out, NWb, NEb, SEb, SOb, cent, bottomRgb);
+}
+
+/**
+ * Empuja un triangulo con winding garantizado CCW visto desde FUERA del
+ * solido. Calcula la normal del triangulo y la compara con la direccion
+ * hacia el centroide; si apunta hacia el centroide (hacia DENTRO), invierte
+ * el orden de p2 y p3. Esto evita errores manuales de winding.
+ */
+function pushTriOriented(out, p1, p2, p3, centroid, rgb) {
+  const n = _triNormal(p1, p2, p3);
+  const toC = [centroid[0]-p1[0], centroid[1]-p1[1], centroid[2]-p1[2]];
+  const dot = n[0]*toC[0] + n[1]*toC[1] + n[2]*toC[2];
+  if (dot > 0) {
+    // Normal apunta hacia el centroide (dentro). Invertir.
+    pushTri(out, p1, p3, p2, [-n[0], -n[1], -n[2]], rgb);
+  } else {
+    pushTri(out, p1, p2, p3, n, rgb);
+  }
+}
+
+/**
+ * Empuja un quad orientado igual que pushTriOriented (se asume coplanar y
+ * convexo). Internamente lo descompone en dos triangulos.
+ */
+function pushQuadOriented(out, p1, p2, p3, p4, centroid, rgb) {
+  pushTriOriented(out, p1, p2, p3, centroid, rgb);
+  pushTriOriented(out, p1, p3, p4, centroid, rgb);
+}
+
+function pushWedge(out, x0, y0, z0, x1, y1, z1, direction, colors) {
+  const topRgb    = Array.isArray(colors) ? colors : colors.top    ?? colors.side;
+  const sideRgb   = Array.isArray(colors) ? colors : colors.side;
+  const bottomRgb = Array.isArray(colors) ? colors : colors.bottom ?? colors.side;
+  const b00 = [x0,y0,z0], b10 = [x1,y0,z0], b11 = [x1,y1,z0], b01 = [x0,y1,z0];
+  const t00 = [x0,y0,z1], t10 = [x1,y0,z1], t11 = [x1,y1,z1], t01 = [x0,y1,z1];
+  // Centroide aproximado del solido (medio de la celda + medio de la altura
+  // ponderado hacia el lado alto). Para una cuña cardinal, el centroide cae
+  // mas hacia la cresta alta; para un tetraedro diagonal, mas hacia el apex.
+  // Cualquier punto estrictamente interior basta para orientar las caras.
+  const cx = (x0+x1)/2, cy = (y0+y1)/2;
+  const cz = z0 + (z1-z0)*0.3;
+  // Para tetraedros diagonales, sesgamos el centroide hacia la esquina alta.
+  const cxBias = (k) => (x0 + cx)/2 + ((k.indexOf('e')>=0 ? x1 : x0) - cx)*0.25;
+  const cyBias = (k) => (y0 + cy)/2 + ((k.indexOf('n')>=0 ? y1 : y0) - cy)*0.25;
+  let cent;
+  if (direction === 'n')      cent = [cx, (cy+y1)/2, cz];
+  else if (direction === 's') cent = [cx, (cy+y0)/2, cz];
+  else if (direction === 'e') cent = [(cx+x1)/2, cy, cz];
+  else if (direction === 'w') cent = [(cx+x0)/2, cy, cz];
+  else cent = [cxBias(direction), cyBias(direction), cz];
+  // Base (-Z): siempre presente.
+  pushQuadOriented(out, b00, b10, b11, b01, cent, bottomRgb);
+  if (direction === 'n') {
+    // Pared trasera N (y=y1), plano inclinado, dos lados triangulares.
+    pushQuadOriented(out, b01, b11, t11, t01, cent, sideRgb);
+    pushQuadOriented(out, t01, t11, b10, b00, cent, topRgb);
+    pushTriOriented(out, b10, b11, t11, cent, sideRgb);
+    pushTriOriented(out, b00, t01, b01, cent, sideRgb);
+  } else if (direction === 's') {
+    pushQuadOriented(out, b00, b10, t10, t00, cent, sideRgb);
+    pushQuadOriented(out, t10, t00, b01, b11, cent, topRgb);
+    pushTriOriented(out, b10, t10, b11, cent, sideRgb);
+    pushTriOriented(out, b00, b01, t00, cent, sideRgb);
+  } else if (direction === 'e') {
+    pushQuadOriented(out, b10, b11, t11, t10, cent, sideRgb);
+    pushQuadOriented(out, t11, t10, b00, b01, cent, topRgb);
+    pushTriOriented(out, b00, t10, b10, cent, sideRgb);
+    pushTriOriented(out, b01, b11, t11, cent, sideRgb);
+  } else if (direction === 'w') {
+    pushQuadOriented(out, b00, t00, t01, b01, cent, sideRgb);
+    pushQuadOriented(out, t00, t01, b11, b10, cent, topRgb);
+    pushTriOriented(out, b00, b10, t00, cent, sideRgb);
+    pushTriOriented(out, b01, t01, b11, cent, sideRgb);
+  } else if (direction === 'ne') {
+    const hi = t11;
+    pushTriOriented(out, b01, b11, hi, cent, sideRgb);
+    pushTriOriented(out, b11, b10, hi, cent, sideRgb);
+    pushTriOriented(out, hi, b10, b00, cent, topRgb);
+    pushTriOriented(out, hi, b00, b01, cent, topRgb);
+  } else if (direction === 'nw') {
+    const hi = t01;
+    pushTriOriented(out, b11, b01, hi, cent, sideRgb);
+    pushTriOriented(out, b01, b00, hi, cent, sideRgb);
+    pushTriOriented(out, hi, b11, b10, cent, topRgb);
+    pushTriOriented(out, hi, b10, b00, cent, topRgb);
+  } else if (direction === 'se') {
+    const hi = t10;
+    pushTriOriented(out, b00, b10, hi, cent, sideRgb);
+    pushTriOriented(out, b10, b11, hi, cent, sideRgb);
+    pushTriOriented(out, hi, b00, b01, cent, topRgb);
+    pushTriOriented(out, hi, b01, b11, cent, topRgb);
+  } else if (direction === 'sw') {
+    const hi = t00;
+    pushTriOriented(out, b10, b00, hi, cent, sideRgb);
+    pushTriOriented(out, b00, b01, hi, cent, sideRgb);
+    pushTriOriented(out, hi, b01, b11, cent, topRgb);
+    pushTriOriented(out, hi, b11, b10, cent, topRgb);
+  }
+}
+
+/**
+ * Tetraedro apoyado en el cuadrante de una esquina alta del corner_in.
+ * Base triangular en z=z0 (3 esquinas del cuadrante del apex), apex en z=z1
+ * directamente encima de la esquina alta. Cuatro caras: 1 base triangular +
+ * 3 laterales (2 verticales pegadas al perfil de la celda + 1 inclinada
+ * diagonal mirando hacia el cuadrante bajo).
+ */
+function pushPyramidTip(out, x0, y0, z0, x1, y1, z1, dir, colors) {
+  const topRgb    = Array.isArray(colors) ? colors : colors.top    ?? colors.side;
+  const sideRgb   = Array.isArray(colors) ? colors : colors.side;
+  const bottomRgb = Array.isArray(colors) ? colors : colors.bottom ?? colors.side;
+  const NW = [x0, y1, z0];
+  const NE = [x1, y1, z0];
+  const SE = [x1, y0, z0];
+  const SW = [x0, y0, z0];
+  let B1, B2, B3, apex;
+  if (dir === 0) {
+    B1 = NW; B2 = NE; B3 = SE; apex = [x1, y1, z1];
+  } else if (dir === 1) {
+    B1 = NE; B2 = SE; B3 = SW; apex = [x1, y0, z1];
+  } else if (dir === 2) {
+    B1 = SE; B2 = SW; B3 = NW; apex = [x0, y0, z1];
+  } else {
+    B1 = SW; B2 = NW; B3 = NE; apex = [x0, y1, z1];
+  }
+  // Centroide del tetraedro = promedio de los 4 vertices.
+  const cent = [
+    (B1[0]+B2[0]+B3[0]+apex[0])/4,
+    (B1[1]+B2[1]+B3[1]+apex[1])/4,
+    (B1[2]+B2[2]+B3[2]+apex[2])/4,
+  ];
+  // Cuatro caras: base + 3 laterales. pushTriOriented orienta cada una.
+  pushTriOriented(out, B1, B2, B3, cent, bottomRgb);
+  pushTriOriented(out, B1, B2, apex, cent, sideRgb);
+  pushTriOriented(out, B2, B3, apex, cent, sideRgb);
+  pushTriOriented(out, B3, B1, apex, cent, topRgb);
+}
+
 function pushBox(out, x0, y0, z0, x1, y1, z1, colors) {
   const topRgb    = Array.isArray(colors) ? colors : colors.top    ?? colors.side;
   const sideRgb   = Array.isArray(colors) ? colors : colors.side;
@@ -229,6 +513,125 @@ function addCellToMesh(out, tilemap, col, row, gridHalfX, gridHalfY) {
     const orgb = OBJECT_COLORS.get(obj.kind)?.top ?? DEFAULT_LAND;
     pushBox(out, ox0, oy0, oz0, ox1, oy1, oz1, orgb);
   }
+
+  // Decoraciones de erosion (preparacion_iso). El brush se extiende desde
+  // el suelo de la celda hasta la altura del vecino mas alto en la
+  // direccion del kind, de modo que la cresta alta coincide con la cara
+  // superior del cubo vecino (sin escalon).
+  const decoCode = tilemap.decorations ? tilemap.decorations[i] : 0;
+  if (decoCode) {
+    const deco = decodeDeco(decoCode);
+    const rampDir = deco ? kindToRampDirection(deco.kind, deco.dir) : null;
+    const yellow = [0.94, 0.78, 0.32];
+    const yellowShade = [0.78, 0.62, 0.20];
+    const hAtSafe = (c, r) => {
+      if (c < 0 || c >= tilemap.cols || r < 0 || r >= tilemap.rows) return h;
+      return Math.max(h, tilemap.heights[r * tilemap.cols + c]);
+    };
+    let neighborMaxH = h;
+    if (deco) {
+      if (deco.kind === 'ramp') {
+        neighborMaxH = ({
+          0: hAtSafe(col, row - 1),
+          1: hAtSafe(col + 1, row),
+          2: hAtSafe(col, row + 1),
+          3: hAtSafe(col - 1, row),
+        })[deco.dir] ?? h;
+      } else if (deco.kind === 'corner_in') {
+        // Max de los 3 vecinos que tocan la esquina alta (2 ortos + diag),
+        // no solo el diagonal: cubre el caso de un orto entero mas alto.
+        const corners3 = ({
+          0: [hAtSafe(col, row - 1), hAtSafe(col + 1, row), hAtSafe(col + 1, row - 1)],
+          1: [hAtSafe(col, row + 1), hAtSafe(col + 1, row), hAtSafe(col + 1, row + 1)],
+          2: [hAtSafe(col, row + 1), hAtSafe(col - 1, row), hAtSafe(col - 1, row + 1)],
+          3: [hAtSafe(col, row - 1), hAtSafe(col - 1, row), hAtSafe(col - 1, row - 1)],
+        })[deco.dir];
+        neighborMaxH = corners3
+          ? Math.max(corners3[0], corners3[1], corners3[2])
+          : h;
+      } else if (deco.kind === 'corner_out' || deco.kind === 'ramp_diag') {
+        neighborMaxH = ({
+          0: hAtSafe(col + 1, row - 1),
+          1: hAtSafe(col + 1, row + 1),
+          2: hAtSafe(col - 1, row + 1),
+          3: hAtSafe(col - 1, row - 1),
+        })[deco.dir] ?? h;
+      }
+    }
+    const terrainTopZ = h * HEIGHT_UNIT;
+    // Maxima altura del bloque de erosion: 1 HEIGHT_UNIT. Si el vecino esta
+    // mas alto, no estiramos el brush — mantenemos coherencia con tilemap.
+    const decoTopZ = Math.min(
+      neighborMaxH * HEIGHT_UNIT,
+      terrainTopZ + HEIGHT_UNIT,
+    );
+    if (rampDir && decoTopZ > terrainTopZ) {
+      // ramp cardinal y corner_out (pico unico): tetraedro/cuna.
+      pushWedge(out, x0, y0, terrainTopZ, x1, y1, decoTopZ, rampDir,
+        { top: yellow, side: yellowShade, bottom: yellowShade });
+    } else if (deco && deco.kind === 'corner_in' && decoTopZ > terrainTopZ) {
+      // corner_in: cubo lleno con la esquina opuesta cortada.
+      pushCornerIn(out, x0, y0, terrainTopZ, x1, y1, decoTopZ, deco.dir,
+        { top: yellow, side: yellowShade, bottom: yellowShade });
+      // Tip piramidal sobre el corner_in cuando el vecino diagonal sube mas
+      // de 1u. Piramide de base cuadrada con apex en la esquina alta a la
+      // altura del diagonal. Dos caras laterales son verticales (lado de
+      // los ortos altos) y dos son inclinadas.
+      // Apex del tip: usamos cobertura POR ARISTA del vecino, no solo h+1
+      // si hay deco. Solo cuenta como +1 si la deco del vecino sube las
+      // esquinas adecuadas que tocan el corner_in. Sin esto, un vecino con
+      // ramp:0 (cresta N alta) no cubre la arista S, pero la heuristica
+      // simple "+1 si hay deco" daria un tip degenerado expuesto.
+      const C_NE = 1, C_SE = 2, C_SW = 4, C_NW = 8;
+      const decoKindsArr = ['ramp','ramp_u','ramp_diag','pit','corner_in','corner_out','pyramid','cube','wedge','ramp_u_closed','bridge_diag'];
+      const highCornersOf = (decoCode) => {
+        if (!decoCode) return 0;
+        const k = decoKindsArr[((decoCode >> 2) & 0xff) - 1];
+        const d = decoCode & 3;
+        if (k === 'ramp') return [C_NE|C_NW, C_NE|C_SE, C_SE|C_SW, C_SW|C_NW][d];
+        if (k === 'corner_in') return [C_NE|C_NW|C_SE, C_NE|C_SE|C_SW, C_SE|C_SW|C_NW, C_NW|C_NE|C_SW][d];
+        if (k === 'ramp_diag' || k === 'corner_out') return [C_NE, C_SE, C_SW, C_NW][d];
+        if (k === 'cube' || k === 'pyramid') return 0xf;
+        return 0;
+      };
+      const coverEdge = (c, r, needMask) => {
+        if (c < 0 || c >= tilemap.cols || r < 0 || r >= tilemap.rows) return h;
+        const hn = tilemap.heights[r * tilemap.cols + c];
+        const dn = (tilemap.decorations && tilemap.decorations[r * tilemap.cols + c]) || 0;
+        const hi = highCornersOf(dn);
+        return ((hi & needMask) === needMask) ? hn + 1 : hn;
+      };
+      // Cobertura por la esquina del vecino que coincide con el apex.
+      // Si esa esquina del vecino es alta, su pendiente baja linealmente
+      // empatando con el plano del tip.
+      const tipEdges = ({
+        0: [{ dc: 0, dr: -1, mask: C_SE }, { dc: 1, dr: 0, mask: C_NW }, { dc: 1, dr: -1, mask: C_SW }],
+        1: [{ dc: 0, dr:  1, mask: C_NE }, { dc: 1, dr: 0, mask: C_SW }, { dc: 1, dr:  1, mask: C_NW }],
+        2: [{ dc: 0, dr:  1, mask: C_NW }, { dc:-1, dr: 0, mask: C_SE }, { dc:-1, dr:  1, mask: C_NE }],
+        3: [{ dc: 0, dr: -1, mask: C_SW }, { dc:-1, dr: 0, mask: C_NE }, { dc:-1, dr: -1, mask: C_SE }],
+      })[deco.dir];
+      let apexH = h;
+      if (tipEdges) {
+        apexH = Math.min(
+          coverEdge(col + tipEdges[0].dc, row + tipEdges[0].dr, tipEdges[0].mask),
+          coverEdge(col + tipEdges[1].dc, row + tipEdges[1].dr, tipEdges[1].mask),
+          coverEdge(col + tipEdges[2].dc, row + tipEdges[2].dr, tipEdges[2].mask),
+        );
+      }
+      if (apexH > h + 1) {
+        pushPyramidTip(out, x0, y0, (h + 1) * HEIGHT_UNIT,
+          x1, y1, apexH * HEIGHT_UNIT, deco.dir,
+          { top: yellow, side: yellowShade, bottom: yellowShade });
+      }
+    } else if (deco && deco.kind === 'cube') {
+      pushBox(out, x0, y0, terrainTopZ, x1, y1, terrainTopZ + HEIGHT_UNIT,
+        { top: yellow, side: yellowShade, bottom: yellowShade });
+    } else if (deco) {
+      const placeholder = [0.6, 0.5, 0.2];
+      pushBox(out, x0, y0, terrainTopZ, x1, y1, terrainTopZ + HEIGHT_UNIT,
+        { top: placeholder, side: placeholder, bottom: placeholder });
+    }
+  }
 }
 
 /** ----- Chunk-based API ----- */
@@ -296,6 +699,46 @@ export function buildWater(tilemap) {
     x1, y1, SEA_LEVEL_Z - WATER_DROP,
     WATER_COLOR,
   );
+  return finaliseBuilder(out);
+}
+
+/**
+ * Pinta gizmos 3D para los nodos de patrulla: un cubo pequeno por nodo a
+ * (terrenoTopZ + flightHeight*HEIGHT_UNIT). Aristas no — el 2D ya las
+ * muestra. Las rutas se ven coloreadas: la activa naranja, el resto azul.
+ *
+ * No respeta playArea (los nodos de patrulla son entidades sueltas; tiene
+ * sentido verlas siempre que existan).
+ */
+export function buildPatrolGizmos(tilemap, activePatrolId) {
+  const out = makeBuilder();
+  const patrols = tilemap.patrols;
+  if (!patrols || patrols.length === 0) return finaliseBuilder(out);
+  const { cols, rows, heights } = tilemap;
+  const gridHalfX = (cols * CELL_SIZE) / 2;
+  const gridHalfY = (rows * CELL_SIZE) / 2;
+  const ACTIVE_RGB   = [1.0, 0.55, 0.15];
+  const INACTIVE_RGB = [0.35, 0.6, 0.9];
+  const HALF = 16; // cubo de 32u de arista
+  for (const p of patrols) {
+    const rgb = (p.id === activePatrolId) ? ACTIVE_RGB : INACTIVE_RGB;
+    for (const n of p.nodes) {
+      if (n.col < 0 || n.col >= cols || n.row < 0 || n.row >= rows) continue;
+      const xc = -gridHalfX + (n.col + 0.5) * CELL_SIZE;
+      const ySouthIdx = (rows - 1) - n.row;
+      const yc = -gridHalfY + (ySouthIdx + 0.5) * CELL_SIZE;
+      // Altura: terreno bajo el nodo + flightHeight*HEIGHT_UNIT.
+      // Si la celda esta sumergida (h<0) usamos sea level como referencia.
+      const h = heights[n.row * cols + n.col];
+      const baseZ = (h >= 0 ? h : 0) * HEIGHT_UNIT;
+      const zc = baseZ + p.flightHeight * HEIGHT_UNIT;
+      pushBox(out,
+        xc - HALF, yc - HALF, zc - HALF,
+        xc + HALF, yc + HALF, zc + HALF,
+        rgb,
+      );
+    }
+  }
   return finaliseBuilder(out);
 }
 

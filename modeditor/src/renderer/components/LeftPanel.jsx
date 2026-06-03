@@ -1,6 +1,6 @@
 import React from 'react';
 import { BRUSH_PALETTE } from '../../shared/types.mjs';
-import { useStore, getBrushIdx, setBrushIdx, getMode } from '../state/store.js';
+import { useStore, getBrushIdx, setBrushIdx, getMode, setSelectedEntityKind } from '../state/store.js';
 
 /** Per-biome texture previews. Each biome now lives in its own
  *  subfolder with 5 face PNGs (top/side/capital/base/bottom — see
@@ -43,9 +43,9 @@ export function LeftPanel() {
 
   return (
     <div className="panel">
-      {mode !== 'paint' && (
+      {mode !== 'paint' && mode !== 'entities' && (
         <div style={{ fontSize: 11, color: '#8da0b8', marginBottom: 6 }}>
-          (selecciona el modo Pintar para usar la paleta)
+          (selecciona el modo Pintar o Entidades para usar la paleta)
         </div>
       )}
       <div className="palette">
@@ -53,7 +53,14 @@ export function LeftPanel() {
           <button
             key={`${b.type}-${b.id}`}
             className={`palette-swatch ${selected === idx ? 'selected' : ''}`}
-            onClick={() => setBrushIdx(idx)}
+            onClick={() => {
+              setBrushIdx(idx);
+              // Si el brush elegido es un enemigo, tambien actualizamos
+              // el kind activo del modo Entidades — asi la paleta de la
+              // izquierda controla a la vez el "que pintar" y el "que
+              // colocar" sin tener selectores duplicados.
+              if (b.type === 'enemy') setSelectedEntityKind(b.id);
+            }}
             title={b.label}
           >
             <span className="swatch-label">{b.label}</span>

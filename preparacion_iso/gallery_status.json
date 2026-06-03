@@ -1,0 +1,15 @@
+{
+  "ramp/0": true,
+  "ramp/3": true,
+  "pit/0": true,
+  "ramp_u/0": true,
+  "ramp_diag/0": true,
+  "corner_in/0": true,
+  "pyramid/0": true,
+  "cube/0": true,
+  "unknown/0": true,
+  "corner_out/0": true,
+  "wedge/0": true,
+  "ramp_u_closed/0": true,
+  "bridge_diag/0": true
+}

@@ -1,0 +1,44 @@
+{
+  "id": "061",
+  "cubes": 97,
+  "decorations": [
+    {
+      "row": 2,
+      "col": 2,
+      "kind": "ramp",
+      "dir": 0
+    },
+    {
+      "row": 0,
+      "col": 2,
+      "kind": "ramp",
+      "dir": 2
+    },
+    {
+      "row": 1,
+      "col": 0,
+      "kind": "ramp_u_closed",
+      "dir": 1
+    },
+    {
+      "row": 1,
+      "col": 1,
+      "kind": "pit",
+      "dir": 0
+    },
+    {
+      "row": 2,
+      "col": 1,
+      "kind": "corner_in",
+      "dir": 3
+    },
+    {
+      "row": 0,
+      "col": 1,
+      "kind": "corner_in",
+      "dir": 2
+    }
+  ],
+  "quality": "good",
+  "updatedAt": "2026-05-16T19:25:39.832Z"
+}

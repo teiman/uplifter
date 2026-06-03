@@ -1,0 +1,32 @@
+{
+  "id": "08f",
+  "cubes": 143,
+  "decorations": [
+    {
+      "row": 2,
+      "col": 0,
+      "kind": "corner_in",
+      "dir": 0
+    },
+    {
+      "row": 2,
+      "col": 2,
+      "kind": "ramp",
+      "dir": 3
+    },
+    {
+      "row": 1,
+      "col": 2,
+      "kind": "corner_in",
+      "dir": 3
+    },
+    {
+      "row": 1,
+      "col": 1,
+      "kind": "pit",
+      "dir": 0
+    }
+  ],
+  "quality": "good",
+  "updatedAt": "2026-05-16T19:14:24.992Z"
+}

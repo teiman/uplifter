@@ -3,6 +3,7 @@ import { Button, ButtonGroup } from '@blueprintjs/core';
 import {
   PALETTE, SEA_LEVEL_H, OBJECT_BY_KIND,
   REGION_GRID, regionBounds, regionOfCell,
+  decodeDeco, ENEMY_BY_KIND,
 } from '../../shared/types.mjs';
 import {
   subscribe,
@@ -16,14 +17,38 @@ import {
   getClipboard,
   fillRect,
   fillRectHeight,
+  applyErosionRect,
+  removeErosionRect,
+  applySmoothRect,
+  applyCapRect,
+  removeBuildingsRect,
   floodFillPaint,
+  floodFillHeight,
   copyRect,
   pasteAt,
   runCityGenerator,
+  runMilitaryGenerator,
+  undoGenerator,
   setPlayArea,
   clearPlayArea,
   takePendingFocusCell,
   setView2dCenter,
+  getShow2dDebug,
+  runErosion2SiglosWithProgress,
+  togglePatrolNodeAtCell,
+  getActivePatrolId,
+  undoPatrol,
+  placeOrSelectEntityAtCell,
+  selectEntityAtCell,
+  getSelectedEnemyId,
+  getEnemyAtCell,
+  moveEnemyToCell,
+  setSelectedEnemy,
+  getSelectedEntityRef,
+  setSelectedEntityRef,
+  getPatrolNodeAtCell,
+  addPatrolNodeAtCell,
+  movePatrolNodeToCell,
 } from '../state/store.js';
 
 /** Same as LeftPanel: per-biome top.png URL from Vite. The 2D editor
@@ -63,6 +88,163 @@ const MAX_ZOOM_IDX = ZOOM_LEVELS.length - 1;
 
 function clampZoomIdx(idx) {
   return Math.max(MIN_ZOOM_IDX, Math.min(MAX_ZOOM_IDX, idx));
+}
+
+/**
+ * Pinta todas las rutas de patrulla: aristas (ciclo cerrado) y nodos.
+ * La ruta activa va naranja y mas gruesa; el resto en azul tenue.
+ *
+ * Coordenadas: cada nodo es {col,row}. Convertimos a pantalla con el
+ * mismo offsetCellX/Y y tile que usa el render del terreno.
+ */
+/**
+ * Pinta los enemigos como discos con glyph centrado. El seleccionado lleva
+ * un anillo extra blanco para destacar. Cada enemigo respeta su color y
+ * glyph definidos en ENEMY_TYPES.
+ *
+ * `angle` se indica con una linea radial corta apuntando desde el centro
+ * hacia la direccion Quake (0° = Este, 90° = Norte; con +Y al sur en
+ * pantalla pasamos a sin(-angle)).
+ */
+function drawEnemies(ctx, t, view, tile, selectedId) {
+  if (!t.enemies || t.enemies.length === 0) return;
+  // Primero: lineas finas desde cada enemy con target hasta el primer
+  // nodo de su ruta. Es feedback visual rapido para detectar enemies
+  // que se quedaron sin ruta (no aparece la linea) — el bug clasico es
+  // crear una ruta despues de colocar el enemy y olvidar asignarsela.
+  if (tile >= 4) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(180, 220, 255, 0.45)';
+    ctx.lineWidth = Math.max(1, Math.round(tile / 22));
+    ctx.setLineDash([3, 3]);
+    for (const e of t.enemies) {
+      if (!e.target) continue;
+      const route = t.patrols.find(p => p.id === e.target);
+      if (!route || route.nodes.length === 0) continue;
+      const n0 = route.nodes[0];
+      const ex = (e.col + 0.5 - view.offsetCellX) * tile;
+      const ey = (e.row + 0.5 - view.offsetCellY) * tile;
+      const nx = (n0.col + 0.5 - view.offsetCellX) * tile;
+      const ny = (n0.row + 0.5 - view.offsetCellY) * tile;
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(nx, ny);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+  for (const e of t.enemies) {
+    const meta = ENEMY_BY_KIND.get(e.kind);
+    if (!meta) continue;
+    const cx = (e.col + 0.5 - view.offsetCellX) * tile;
+    const cy = (e.row + 0.5 - view.offsetCellY) * tile;
+    const r = Math.max(5, tile * 0.42);
+    // Disco relleno
+    ctx.fillStyle = meta.color;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    // Borde negro
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.lineWidth = Math.max(1, Math.round(tile / 14));
+    ctx.stroke();
+    // Indicador de angulo (rayo desde el centro). Quake: angle=0 mira al
+    // este (+X), angle=90 al norte (+Y). En pantalla +Y va al sur, asi
+    // que invertimos el seno.
+    if (tile >= 8) {
+      const a = (e.angle || 0) * Math.PI / 180;
+      const lx = cx + Math.cos(a) * r * 1.1;
+      const ly = cy - Math.sin(a) * r * 1.1;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.lineWidth = Math.max(1, Math.round(tile / 12));
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(lx, ly);
+      ctx.stroke();
+    }
+    // Glyph
+    if (tile >= 10) {
+      ctx.fillStyle = 'white';
+      ctx.font = `bold ${Math.round(tile * 0.55)}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(meta.glyph || '?', cx, cy + 1);
+    }
+    // Anillo de seleccion
+    if (selectedId && e.id === selectedId) {
+      ctx.strokeStyle = 'rgba(255, 255, 80, 0.95)';
+      ctx.lineWidth = Math.max(2, Math.round(tile / 8));
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + Math.max(3, tile * 0.18), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawPatrols(ctx, t, view, tile, activeId, selectedRef) {
+  if (!t.patrols || t.patrols.length === 0) return;
+  const nodeR = Math.max(3, Math.round(tile * 0.32));
+  // Si selectedRef apunta a un nodo, anotamos su localizacion para
+  // pintarle el anillo amarillo despues (en una pasada aparte para que
+  // quede encima de los nodos vecinos).
+  const selNode = (selectedRef && selectedRef.type === 'node')
+    ? { patrolId: selectedRef.patrolId, nodeId: selectedRef.nodeId }
+    : null;
+  for (const p of t.patrols) {
+    const isActive = p.id === activeId;
+    const edgeColor = isActive ? 'rgba(255, 150, 50, 0.95)' : 'rgba(100, 160, 230, 0.7)';
+    const nodeFill  = isActive ? 'rgba(255, 150, 50, 1)'    : 'rgba(100, 160, 230, 0.9)';
+    const lineW     = isActive ? Math.max(2, Math.round(tile / 6)) : Math.max(1, Math.round(tile / 10));
+    // Aristas: incluyen cierre nodes[N-1] -> nodes[0] (lista circular)
+    // si la ruta tiene >= 2 nodos.
+    if (p.nodes.length >= 2) {
+      ctx.strokeStyle = edgeColor;
+      ctx.lineWidth = lineW;
+      ctx.beginPath();
+      for (let i = 0; i < p.nodes.length; i++) {
+        const n = p.nodes[i];
+        const sx = (n.col + 0.5 - view.offsetCellX) * tile;
+        const sy = (n.row + 0.5 - view.offsetCellY) * tile;
+        if (i === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.closePath(); // dibuja el cierre ciclico
+      ctx.stroke();
+    }
+    // Nodos: circulo relleno + borde negro. El primer nodo lleva un anillo
+    // adicional para distinguir el "inicio" (visual; en runtime la ruta es
+    // ciclica y todos son equivalentes).
+    ctx.lineWidth = Math.max(1, Math.round(tile / 16));
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+    for (let i = 0; i < p.nodes.length; i++) {
+      const n = p.nodes[i];
+      const cx = (n.col + 0.5 - view.offsetCellX) * tile;
+      const cy = (n.row + 0.5 - view.offsetCellY) * tile;
+      ctx.fillStyle = nodeFill;
+      ctx.beginPath();
+      ctx.arc(cx, cy, nodeR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Anillo amarillo si este nodo esta seleccionado (consistente con
+      // el halo del enemy seleccionado en drawEnemies).
+      if (selNode && selNode.patrolId === p.id && selNode.nodeId === n.id) {
+        ctx.strokeStyle = 'rgba(255, 255, 80, 0.95)';
+        ctx.lineWidth = Math.max(2, Math.round(tile / 8));
+        ctx.beginPath();
+        ctx.arc(cx, cy, nodeR + Math.max(3, tile * 0.18), 0, Math.PI * 2);
+        ctx.stroke();
+        // Restauramos los estilos para el siguiente nodo (border negro).
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.lineWidth = Math.max(1, Math.round(tile / 16));
+      }
+      if (i === 0) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, nodeR + Math.max(2, tile * 0.12), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  }
 }
 
 export function Canvas2D() {
@@ -168,6 +350,7 @@ export function Canvas2D() {
     // submerged cells get a flat tinted fillRect).
     const waterImg = WATER_IMAGE;
     const useTextures = step === 1;
+    const showDebug = getShow2dDebug();
 
     for (let row = row0; row < row1; row += step) {
       const sy = Math.round((row - view.offsetCellY) * tile);
@@ -218,6 +401,17 @@ export function Canvas2D() {
           ctx.fillRect(sx, sy, blockPx, blockPx);
         }
 
+        // DEBUG: muestra la altura de cada celda en la esquina inferior
+        // izquierda, util para diagnosticar lo que Erosion ve. Solo a zoom
+        // alto. h = -1 es agua; no se imprime. Toggle desde la toolbar.
+        if (showDebug && useTextures && tile >= 24 && h >= SEA_LEVEL_H) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+          ctx.font = `bold ${Math.max(8, Math.round(tile * 0.18))}px sans-serif`;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(`h=${h}`, sx + 2, sy + tile - 2);
+        }
+
         // Cliff outlines: only at fine zoom (step=1). At coarse zoom we
         // sampled cells, so outlines based on per-cell neighbour height
         // wouldn't be representative anyway, and the lines would
@@ -258,6 +452,44 @@ export function Canvas2D() {
             ctx.moveTo(sx,        sy + tile - o);
             ctx.lineTo(sx + tile, sy + tile - o);
             ctx.stroke();
+          }
+        }
+
+        // Decoraciones de la tool Erosion (preparacion_iso). Pintamos overlay
+        // amarillo y el nombre del kind+dir en texto pequeno, para diagnostico.
+        if (useTextures && t.decorations) {
+          const code = t.decorations[i];
+          if (code) {
+            const deco = decodeDeco(code);
+            if (deco) {
+              ctx.fillStyle = 'rgba(240, 200, 80, 0.55)';
+              ctx.fillRect(sx + 2, sy + 2, tile - 4, tile - 4);
+              if (tile >= 24) {
+                // Etiqueta textual: "kind/dir" para que se vea exactamente
+                // que kind eligio Erosion en cada celda.
+                const dirSuf = ({
+                  ramp: ['N','E','S','O'],
+                  ramp_u: ['NS','EO'],
+                  ramp_diag: ['NE','SE','SO','NO'],
+                  corner_in: ['NE','SE','SO','NO'],
+                  corner_out: ['NE','SE','SO','NO'],
+                  wedge: ['NE','SE','SO','NO'],
+                  ramp_u_closed: ['abreS','abreO','abreN','abreE'],
+                  bridge_diag: ['NOSE','NESO'],
+                }[deco.kind] || ['']) [deco.dir] || '';
+                const label = dirSuf ? `${deco.kind}\n${dirSuf}` : deco.kind;
+                ctx.fillStyle = 'rgba(20, 10, 0, 0.95)';
+                ctx.font = `bold ${Math.max(8, Math.round(tile * 0.18))}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                const lines = label.split('\n');
+                const lh = Math.round(tile * 0.22);
+                const startY = sy + tile / 2 - (lines.length - 1) * lh / 2;
+                for (let li = 0; li < lines.length; li++) {
+                  ctx.fillText(lines[li], sx + tile / 2, startY + li * lh);
+                }
+              }
+            }
           }
         }
 
@@ -388,6 +620,44 @@ export function Canvas2D() {
         // a click there will clear the selection.
         ctx.fillStyle = sel ? 'rgba(255, 100, 100, 0.18)' : 'rgba(255, 220, 80, 0.18)';
         ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      }
+    }
+
+    // Rutas de patrulla. Para cada ruta dibujamos aristas (ciclo cerrado
+    // si >= 2 nodos) y luego los nodos. La activa va naranja y mas
+    // gruesa; el resto en azul tenue.
+    drawPatrols(ctx, t, view, tile, getActivePatrolId(), getSelectedEntityRef());
+
+    // Entidades (enemigos). Encima de las rutas para que el glyph se vea
+    // aunque pase un nodo justo debajo.
+    drawEnemies(ctx, t, view, tile, getSelectedEnemyId());
+
+    // Drag preview de entidad (enemigo o nodo): halo en la celda destino
+    // — verde si el drop seria valido, rojo si la celda destino ya tiene
+    // OTRA entidad del mismo tipo (otro enemigo / otro nodo de la misma
+    // ruta). Cruces entre tipos (un nodo encima de un enemigo) se permiten
+    // — son entidades distintas en el writer.
+    if (dragRef.current.active === 'entityDrag') {
+      const dst = dragRef.current.entityCurCell;
+      const ref = dragRef.current.pickedRef;
+      if (dst && ref) {
+        let blocked = false;
+        if (ref.type === 'enemy') {
+          blocked = !!t.enemies.find(x => x.id !== ref.id && x.col === dst.col && x.row === dst.row);
+        } else if (ref.type === 'node') {
+          const p = t.patrols.find(p => p.id === ref.patrolId);
+          if (p) blocked = !!p.nodes.find(n => n.id !== ref.nodeId && n.col === dst.col && n.row === dst.row);
+        }
+        const cx = (dst.col + 0.5 - view.offsetCellX) * tile;
+        const cy = (dst.row + 0.5 - view.offsetCellY) * tile;
+        const r = Math.max(6, tile * 0.5);
+        ctx.strokeStyle = blocked ? 'rgba(255, 80, 80, 0.95)' : 'rgba(120, 230, 120, 0.95)';
+        ctx.lineWidth = Math.max(2, Math.round(tile / 8));
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
 
@@ -592,11 +862,15 @@ export function Canvas2D() {
     }
     if (e.button !== 0) return;
     if (getTool() === 'bucket') {
-      // One-shot flood fill: pinta toda la región 4-connected que
-      // comparte altura y textura con la celda bajo el cursor. No hay
-      // drag — un único click sirve.
+      // One-shot flood fill. En modo paint pinta la textura/objeto del
+      // brush activo; en modo height fija la altura objetivo (rectTargetH)
+      // a toda la región 4-connected con misma h+textura. No hay drag.
       const { col, row } = cellFromEvent(e);
-      floodFillPaint(col, row);
+      if (getMode() === 'height') {
+        floodFillHeight(col, row, getRectTargetH());
+      } else {
+        floodFillPaint(col, row);
+      }
       endStroke();
       return;
     }
@@ -618,15 +892,98 @@ export function Canvas2D() {
       endStroke();
       return;
     }
-    if (getTool() === 'rect' || (getMode() === 'copy' && getTool() === 'copy')) {
-      // Rect drag — same gesture for paint/height rect-fill AND for
-      // the copy-mode source selection. Which action runs on release
-      // is decided by mode + tool in onMouseUp.
+    if (getMode() === 'gen' && getTool() === 'military') {
+      // Same flow as city, with the military layout (airstrip, hangars,
+      // barracks, bunker, watch tower). Undoable via Ctrl-Z.
+      const { col, row } = cellFromEvent(e);
+      runMilitaryGenerator(col, row);
+      endStroke();
+      return;
+    }
+    if (getTool() === 'rect' || getTool() === 'erosion'
+        || (getMode() === 'height' && getTool() === 'smooth')
+        || (getMode() === 'height' && getTool() === 'cap')
+        || (getMode() === 'height' && getTool() === 'unramp')
+        || (getMode() === 'paint' && getTool() === 'unbuild')
+        || (getMode() === 'copy' && getTool() === 'copy')
+        || (getMode() === 'gen' && getTool() === '2siglos')) {
+      // Rect drag — used by paint/height rect-fill, by erosion (height
+      // mode), and by the copy-mode source selection. The action that
+      // runs on release is decided by mode + tool in onMouseUp.
       const { col, row } = cellFromEvent(e);
       dragRef.current.active = 'rect';
       dragRef.current.rectStart = { col, row };
       dragRef.current.rectEnd   = { col, row };
       draw();
+      return;
+    }
+    if (getMode() === 'patrol' || getMode() === 'entities') {
+      // En estos dos modos se comparte la logica de seleccion/drag de
+      // "entidades visibles", que son:
+      //   - en patrol: nodos de patrullas (todos, no solo de la activa,
+      //     para no obligar al usuario a cambiar de ruta activa con un
+      //     atajo previo).
+      //   - en entities: enemigos primero, nodos despues (mismo orden de
+      //     prioridad de pick que placeOrSelectEntityAtCell).
+      //
+      // Mousedown sobre algo que se puede arrastrar → drag pendiente
+      // (se promueve a drag real solo si el cursor se mueve > 3px).
+      // Mousedown en celda vacia → comportamiento contextual:
+      //   - patrol: anade un nodo en esa celda.
+      //   - entities/place: coloca enemigo del kind activo.
+      //   - entities/select: deselecciona.
+      const { col, row } = cellFromEvent(e);
+      const t = getTilemap();
+      if (col < 0 || col >= t.cols || row < 0 || row >= t.rows) return;
+
+      const mode = getMode();
+      // Pick: enemigo primero (solo en modo entities), luego nodo.
+      let picked = null; // { type, ... }
+      if (mode === 'entities') {
+        const enemy = getEnemyAtCell(col, row);
+        if (enemy) picked = { type: 'enemy', id: enemy.id };
+      }
+      if (!picked) {
+        const hit = getPatrolNodeAtCell(col, row);
+        if (hit) picked = { type: 'node', patrolId: hit.patrol.id, nodeId: hit.node.id };
+      }
+
+      if (picked) {
+        // Pre-selecciona para feedback inmediato y arma el drag pendiente.
+        setSelectedEntityRef(picked);
+        dragRef.current.active = 'entityDragPending';
+        dragRef.current.pickedRef = picked;
+        dragRef.current.entityStartCell = { col, row };
+        dragRef.current.entityCurCell = { col, row };
+        dragRef.current.entityDownX = e.clientX;
+        dragRef.current.entityDownY = e.clientY;
+        // DEBUG temporal: log de quien hemos pickeado y de los enemigos
+        // en esa celda. Si te dice "picked enemy=eX kind=tank" pero el
+        // que se mueve es eY (avion), tendremos la prueba del bug.
+        const enemiesHere = t.enemies.filter(en => en.col === col && en.row === row);
+        const nodesHere = [];
+        for (const pp of t.patrols) {
+          for (const nn of pp.nodes) {
+            if (nn.col === col && nn.row === row) nodesHere.push(`${pp.id}/${nn.id}`);
+          }
+        }
+        window.modeditor?.debug?.log('[pick]', picked,
+          `cell=(${col},${row})`,
+          'enemies@cell:', enemiesHere.map(en => `${en.id}(${en.kind})`).join(',') || '-',
+          'nodes@cell:', nodesHere.join(',') || '-',
+          `selRef=${JSON.stringify(getSelectedEntityRef())}`);
+        draw();
+        return;
+      }
+
+      // Celda vacia.
+      if (mode === 'patrol') {
+        addPatrolNodeAtCell(col, row);
+      } else if (getTool() === 'select') {
+        selectEntityAtCell(col, row);
+      } else {
+        placeOrSelectEntityAtCell(col, row);
+      }
       return;
     }
     if (getMode() === 'area') {
@@ -676,6 +1033,28 @@ export function Canvas2D() {
       draw();
       return;
     }
+    // Drag pendiente sobre una entidad: si el cursor se mueve mas de
+    // DRAG_PX desde el mousedown, lo promovemos a drag real. Asi clicks
+    // puros (sin movimiento) siguen siendo seleccion / no se interpreta
+    // como arrastre accidental.
+    const DRAG_PX = 3;
+    if (dragRef.current.active === 'entityDragPending') {
+      const dx = e.clientX - dragRef.current.entityDownX;
+      const dy = e.clientY - dragRef.current.entityDownY;
+      if (dx * dx + dy * dy >= DRAG_PX * DRAG_PX) {
+        dragRef.current.active = 'entityDrag';
+      } else {
+        return;
+      }
+    }
+    if (dragRef.current.active === 'entityDrag') {
+      const { col, row } = cellFromEvent(e);
+      const cur = dragRef.current.entityCurCell;
+      if (cur && cur.col === col && cur.row === row) return;
+      dragRef.current.entityCurCell = { col, row };
+      draw();
+      return;
+    }
     // Area-mode hover: update the highlighted region and redraw. Done
     // outside the drag check because there's no drag in area mode —
     // every move is just a hover update.
@@ -720,6 +1099,43 @@ export function Canvas2D() {
   }, [onMouseMove]);
 
   const onMouseUp = useCallback(() => {
+    // Drag de entidad (enemigo o nodo de patrulla). Mueve la cosa a la
+    // celda destino. Si la celda destino ya esta ocupada por OTRA
+    // entidad del mismo tipo (otro enemigo / otro nodo de la misma
+    // ruta), la funcion move*ToCell devuelve false y se queda donde
+    // estaba — no permitimos dos cosas en la misma celda.
+    //
+    // Nota sobre cruce de tipos: un nodo y un enemigo PUEDEN coexistir
+    // en la misma celda (son entidades distintas) — el writer las
+    // emite como entidades separadas. Solo prohibimos enemy-enemy y
+    // nodo-nodo dentro de la misma ruta.
+    if (dragRef.current.active === 'entityDrag') {
+      const ref = dragRef.current.pickedRef;
+      const dst = dragRef.current.entityCurCell;
+      window.modeditor?.debug?.log('[drop] ref=', ref, '-> dst=', dst);
+      if (ref && dst) {
+        if (ref.type === 'enemy') {
+          moveEnemyToCell(ref.id, dst.col, dst.row);
+        } else if (ref.type === 'node') {
+          movePatrolNodeToCell(ref.patrolId, ref.nodeId, dst.col, dst.row);
+        }
+      }
+      dragRef.current.active = false;
+      dragRef.current.pickedRef = null;
+      dragRef.current.entityStartCell = null;
+      dragRef.current.entityCurCell = null;
+      draw();
+      return;
+    }
+    if (dragRef.current.active === 'entityDragPending') {
+      // Mousedown sin arrastre — el pre-select del mousedown ya hizo
+      // su trabajo. Limpiamos el ref del drag y salimos.
+      dragRef.current.active = false;
+      dragRef.current.pickedRef = null;
+      dragRef.current.entityStartCell = null;
+      dragRef.current.entityCurCell = null;
+      return;
+    }
     if (dragRef.current.active === 'rect') {
       const a = dragRef.current.rectStart;
       const b = dragRef.current.rectEnd;
@@ -730,6 +1146,22 @@ export function Canvas2D() {
         // copy we snapshot the cells into the clipboard.
         if (getMode() === 'copy') {
           copyRect(a.col, a.row, b.col, b.row);
+        } else if (getMode() === 'height' && getTool() === 'erosion') {
+          applyErosionRect(a.col, a.row, b.col, b.row);
+        } else if (getMode() === 'height' && getTool() === 'unramp') {
+          removeErosionRect(a.col, a.row, b.col, b.row);
+        } else if (getMode() === 'height' && getTool() === 'smooth') {
+          applySmoothRect(a.col, a.row, b.col, b.row);
+        } else if (getMode() === 'height' && getTool() === 'cap') {
+          applyCapRect(a.col, a.row, b.col, b.row, getRectTargetH());
+        } else if (getMode() === 'paint' && getTool() === 'unbuild') {
+          removeBuildingsRect(a.col, a.row, b.col, b.row);
+        } else if (getMode() === 'gen' && getTool() === '2siglos') {
+          // Simulacion async (~200 iteraciones). Lanzamos sin await: el
+          // progreso se publica en el store y la Toolbar lo pinta.
+          runErosion2SiglosWithProgress({
+            c0: a.col, r0: a.row, c1: b.col, r1: b.row,
+          });
         } else if (getMode() === 'height') {
           fillRectHeight(a.col, a.row, b.col, b.row, getRectTargetH());
         } else {
@@ -745,13 +1177,39 @@ export function Canvas2D() {
   }, []);
 
   // Esc cancels an in-flight rect drag without committing.
+  // Ctrl+Z en modo patrol deshace la ultima mutacion sobre rutas
+  // (anadir/quitar nodo, crear/borrar ruta, renombrar, cambiar altura).
+  // Lo limitamos al modo 'patrol' para no chocar con futuros undos
+  // globales en otros modos.
   useEffect(() => {
+    const isEditable = (el) => {
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    };
     const onKey = (e) => {
       if (e.key === 'Escape' && dragRef.current.active === 'rect') {
         dragRef.current.active = false;
         dragRef.current.rectStart = null;
         dragRef.current.rectEnd = null;
         draw();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        if (isEditable(e.target)) return;
+        const m = getMode();
+        if (m === 'patrol') {
+          e.preventDefault();
+          undoPatrol();
+          return;
+        }
+        if (m === 'gen') {
+          // Undo the last generator run (city or military). No-op when
+          // the stack is empty.
+          e.preventDefault();
+          undoGenerator();
+          return;
+        }
       }
     };
     window.addEventListener('keydown', onKey);

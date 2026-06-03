@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import {
-  getTilemap, getTool, getIsoYawIdx,
+  getTilemap, getTool, getIsoYawIdx, getActivePatrolId,
 } from '../state/store.js';
 import {
-  buildChunk, buildWater, chunkCounts, SKY_COLOR,
+  buildChunk, buildWater, buildPatrolGizmos, chunkCounts, SKY_COLOR,
 } from '../state/scene3d.js';
 import {
   WORLD_HALF, SEA_LEVEL_Z, SEA_LEVEL_H,
@@ -412,6 +412,7 @@ export function Viewport3D() {
       }
     }
     uploadMeshSlot('water', buildWater(t));
+    uploadMeshSlot('patrols', buildPatrolGizmos(t, getActivePatrolId()));
   }, [rebuildChunkSlot, uploadMeshSlot]);
 
   /** Apply any pending dirty chunks. Called every frame (cheap when

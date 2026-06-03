@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "PowerShell($src = 'modeditor/src/renderer/assets/textures'; $biomes = @{ tierra='tierra.png'; arena='arena.png'; 'road-up'='road-up.png'; 'road-down-left'='road-down-left.png'; 'road-x'='road-x.png'; metal='metal.png'; plaza='plaza.png'; casa='metal.png'; rascacielos='metal.png' }; $faces = @\\('top','side','capital','base','bottom'\\); foreach \\($b in $biomes.Keys\\) { $dir = Join-Path $src $b; if \\(-not \\(Test-Path $dir\\)\\) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }; foreach \\($f in $faces\\) { Copy-Item -Path \\(Join-Path $src $biomes[$b]\\) -Destination \\(Join-Path $dir \"$f.png\"\\) -Force } }; Get-ChildItem $src -Directory | ForEach-Object { \"$\\($_.Name\\)/: $\\(\\(Get-ChildItem $_.FullName\\).Count\\) files\" })",
+      "Bash(cp -r tools/aseprite-quake-palettes/* \"/c/Program Files \\(x86\\)/Steam/steamapps/common/Aseprite/data/extensions/quake-palettes/\")",
+      "Read(//c/Program Files \\(x86\\)/Steam/steamapps/common/Aseprite/data/extensions/quake-palettes//**)"
+    ]
+  }
+}

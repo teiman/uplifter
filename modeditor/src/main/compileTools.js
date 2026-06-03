@@ -16,14 +16,23 @@ const path = require('node:path');
 
 const { BIN_DIR, TMP_DIR } = require('./paths');
 
-// -subdivide 1024: large faces (sky walls, bedrock, global water) are
-// partitioned into manageable tiles. The default 240 hits a qbsp internal
-// cap of 64 edges/face for very large surfaces (the ±16384 world box);
-// 1024 keeps faces well below that cap AND keeps subface size below the
-// engine's 256×256 lightmap limit (which is what raises "Bad surface
-// extents" at map load time in quakespasm/ironwail). Without subdivision
-// the engine refuses to load the .bsp.
-const QBSP_FLAGS = ['-bsp2', '-subdivide', '1024', '-worldextent', '32768', '-leaktest'];
+// -subdivide 512: large faces (sky walls, bedrock, global water) are
+// partitioned into manageable tiles. La logica:
+//  - El default qbsp (240) sobre-subdivide caras gigantes (el world box
+//    de ±16384u), explotando el numero de superficies y el tiempo de vis.
+//  - 1024 funciona en mapas pequenos pero, cuando hay decenas de miles
+//    de cortes BSP encima (terreno + ~20k decos de erosion), una cara
+//    fragmentada termina con >64 edges en EmitEdges y qbsp aborta.
+//  - 512 es el punto medio: caras del sky/water/bedrock se rompen en
+//    trozos mas chicos (mas faces) sin alcanzar el cap, y el subface
+//    sigue por debajo del limite 256x256 luxels del motor.
+const QBSP_FLAGS = ['-bsp2', '-subdivide', '512', '-worldextent', '32768', '-leaktest'];
+
+// En modo flat el mapa no tiene erosion (sin decenas de miles de decos),
+// asi que el cap de 64 edges por face de qbsp no se acerca al limite y
+// podemos relajar el subdivide a 1024: menos cortes en las caras gigantes
+// del sky/bedrock => qbsp procesa menos faces => mas rapido.
+const QBSP_FLAGS_FLAT = ['-bsp2', '-subdivide', '1024', '-worldextent', '32768', '-leaktest'];
 
 // Fast-profile light flags:
 //   -sunsamples 1  — single sample for sun penumbra instead of the default
@@ -40,6 +49,16 @@ const QBSP_FLAGS = ['-bsp2', '-subdivide', '1024', '-worldextent', '32768', '-le
 const FAST_LIGHT_FLAGS = ['-sunsamples', '1'];
 
 const PROFILES = {
+  // 'flat' es el perfil mas rapido. El mapWriter, cuando ve quality==='flat',
+  // genera geometria minima (terreno con dos alturas, sin edificios, sin
+  // erosion, sin objetos decorativos), asi que qbsp tiene muchos menos brushes
+  // que partir. Saltamos light por completo: el .bsp saldra sin lightmaps,
+  // se vera oscuro/negro en el juego, pero la geometria y los entities
+  // estan ahi — vale para testear gameplay sin esperar la iluminacion.
+  // Si la oscuridad estorba demasiado, en la consola: r_fullbright 1.
+  flat: [
+    { name: 'qbsp',  exe: 'qbsp.exe',  args: QBSP_FLAGS_FLAT },
+  ],
   fast: [
     { name: 'qbsp',  exe: 'qbsp.exe',  args: QBSP_FLAGS },
     { name: 'light', exe: 'light.exe', args: FAST_LIGHT_FLAGS },
@@ -117,7 +136,45 @@ async function compileMap(mapBase, onLog, opts = {}) {
     }
   }
 
-  return { ok: true, leaked: false, bspPath: path.join(TMP_DIR, `${mapBase}.bsp`), lastTool: 'light', exitCode: 0 };
+  const lastTool = tools[tools.length - 1]?.name ?? 'qbsp';
+  return { ok: true, leaked: false, bspPath: path.join(TMP_DIR, `${mapBase}.bsp`), lastTool, exitCode: 0 };
 }
 
-module.exports = { compileMap };
+/**
+ * Recompilacion incremental: solo actualiza el lump de entidades del .bsp
+ * existente con las entidades del .map actual. NO recalcula BSP tree,
+ * planes, faces, edges ni vertexes — todo eso se queda como esta. Casi
+ * instantaneo (ms) comparado con un qbsp completo.
+ *
+ * Pre-requisitos:
+ *   - El .bsp debe existir y ser valido (compilacion previa exitosa).
+ *   - El .map debe haberse regenerado con SOLO cambios en entidades
+ *     (enemies, patrols, spawn). Cambios en geometria con onlyents
+ *     producen un .bsp incoherente — el llamante es responsable de
+ *     decidir cuando usarlo.
+ *
+ * Implementacion: corremos qbsp con -onlyents. Ese flag le dice a qbsp
+ * que abra el .bsp existente, parsee el .map, reemplace el entdata lump
+ * y reescriba el .bsp. No toca lightmaps ni vis data — si las luces
+ * (entidades light_*) cambian, el lightmap quedaria desfasado, pero
+ * nosotros no usamos luces dinamicas, solo _sunlight (worldspawn), asi
+ * que es seguro.
+ */
+async function compileMapOnlyEnts(mapBase, onLog) {
+  const mapFile = path.join(TMP_DIR, `${mapBase}.map`);
+  const bspFile = path.join(TMP_DIR, `${mapBase}.bsp`);
+  if (!(await fileExists(mapFile))) {
+    throw new Error(`Map not found: ${mapFile}`);
+  }
+  if (!(await fileExists(bspFile))) {
+    throw new Error(`BSP not found: ${bspFile} (onlyents requires a previous full compile)`);
+  }
+  const tool = { name: 'qbsp', exe: 'qbsp.exe', args: ['-onlyents'] };
+  const code = await runTool(tool, mapBase, onLog);
+  if (code !== 0) {
+    return { ok: false, leaked: false, bspPath: null, lastTool: 'qbsp', exitCode: code };
+  }
+  return { ok: true, leaked: false, bspPath: bspFile, lastTool: 'qbsp', exitCode: 0 };
+}
+
+module.exports = { compileMap, compileMapOnlyEnts };

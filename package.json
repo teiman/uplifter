@@ -1,0 +1,7 @@
+{
+  "name": "uplifter",
+  "private": true,
+  "scripts": {
+    "buildmod": "mod\\build.bat compile"
+  }
+}

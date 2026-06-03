@@ -6,6 +6,7 @@ import { LeftPanel } from './components/LeftPanel.jsx';
 import { RightPanel } from './components/RightPanel.jsx';
 import { Canvas2D } from './components/Canvas2D.jsx';
 import { Viewport3D } from './components/Viewport3D.jsx';
+import { DayChecklistView } from './components/DayChecklistView.jsx';
 import { LogPanel } from './components/LogPanel.jsx';
 
 import { serialiseTilemap } from '../shared/types.mjs';
@@ -18,6 +19,22 @@ export function App() {
   const [lastBspPath, setLastBspPath] = useState(null);
   const [defaults, setDefaults] = useState(null);
   const [currentTool, setCurrentTool] = useState(null);
+  // Modo debug: cuando esta on, el .map usa texturas dbg_* por kind y el
+  // launcher arranca debug_iw.exe (Ironwail patcheado con el comando
+  // `debug_point`). Permite identificar que brush genera la geometria a
+  // la que apuntamos. Toggle desde el toolbar. Off por defecto.
+  const [debugMode, setDebugMode] = useState(false);
+  // Phong: anade _phong/_phong_angle al func_detail. Suaviza la iluminacion
+  // entre caras casi-coplanares (cuerpo corner_in <-> tip, rampa <-> cubo).
+  // Toggle desde el toolbar. Off por defecto: se activa solo cuando se quiere
+  // pulir el look final, ya que ralentiza light.
+  const [phongMode, setPhongMode] = useState(false);
+  // Nubes: cuando off, el writer no emite los ~500 brushes de
+  // func_detail_illusionary de la banda de nubes. light no calcula
+  // iluminacion sobre ellos -> compilacion notablemente mas rapida.
+  // OFF por defecto: el coste de las nubes en cada compile no compensa
+  // durante iteracion de gameplay; se activa solo para builds finales.
+  const [cloudsEnabled, setCloudsEnabled] = useState(false);
   const toasterRef = useRef(null);
 
   const toast = useCallback((message, intent = 'none', timeout = 2500) => {
@@ -77,6 +94,22 @@ export function App() {
     return () => { cancelled = true; };
   }, []);
 
+  // Si ya hay un .bsp compilado en disco de una sesión anterior, sembrar
+  // lastBspPath para que el botón "Lanzar" funcione sin obligar a
+  // recompilar primero. Es seguro porque onLaunch solo dispara el deploy
+  // del archivo existente — si está obsoleto, basta con recompilar.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await window.modeditor?.bsp?.findExisting?.({ basename: 'uplifter' });
+        if (cancelled || !r?.ok) return;
+        setLastBspPath(r.bspPath);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const onSave = useCallback(async () => {
     if (saving) return;
     setSaving(true);
@@ -103,7 +136,7 @@ export function App() {
     setCurrentTool(null);
     try {
       const snap = serialiseTilemap(getTilemap());
-      const r = await window.modeditor.compile.run({ tilemap: snap, basename: 'uplifter' });
+      const r = await window.modeditor.compile.run({ tilemap: snap, basename: 'uplifter', debug: debugMode, phong: phongMode, clouds: cloudsEnabled });
       const secs = r.elapsedMs != null ? (r.elapsedMs / 1000).toFixed(1) : '?';
       if (r.ok) {
         setLastBspPath(r.bspPath);
@@ -118,7 +151,7 @@ export function App() {
     } finally {
       setCompiling(false);
     }
-  }, [compiling, toast]);
+  }, [compiling, toast, debugMode, phongMode, cloudsEnabled]);
 
   const onLaunch = useCallback(async () => {
     if (!lastBspPath) {
@@ -138,6 +171,7 @@ export function App() {
         map: 'uplifter',
         game: defaults?.quakeGame || 'uplifter',
         cwd: defaults?.quakeCwd || 'd:\\quake',
+        debug: debugMode,
       });
       if (launch.ok) {
         toast('Lanzado', 'success');
@@ -147,7 +181,7 @@ export function App() {
     } catch (err) {
       toast(`Error: ${err.message}`, 'danger', 4000);
     }
-  }, [lastBspPath, defaults, toast]);
+  }, [lastBspPath, defaults, toast, debugMode]);
 
   return (
     <div className="app-root">
@@ -160,6 +194,12 @@ export function App() {
           compiling={compiling}
           saving={saving}
           canLaunch={!!lastBspPath}
+          debugMode={debugMode}
+          onDebugModeChange={setDebugMode}
+          phongMode={phongMode}
+          onPhongModeChange={setPhongMode}
+          cloudsEnabled={cloudsEnabled}
+          onCloudsEnabledChange={setCloudsEnabled}
         />
       </div>
       <div className="app-left">
@@ -180,5 +220,7 @@ export function App() {
 
 function MainView() {
   const view = useStore(() => getView());
-  return view === '3d' ? <Viewport3D /> : <Canvas2D />;
+  if (view === '3d') return <Viewport3D />;
+  if (view === 'day') return <DayChecklistView />;
+  return <Canvas2D />;
 }

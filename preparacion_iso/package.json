@@ -1,0 +1,13 @@
+{
+  "name": "preparacion-iso",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "debug": "node debug.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

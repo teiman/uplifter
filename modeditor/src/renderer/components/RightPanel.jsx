@@ -6,7 +6,11 @@ import {
   getTilemap,
   setSun,
   setQuality,
+  getMode,
 } from '../state/store.js';
+import { PatrolPanel } from './PatrolPanel.jsx';
+import { EntityPanel } from './EntityPanel.jsx';
+import { NodePanel } from './NodePanel.jsx';
 
 /** Plain text input — no spinner buttons, no clamp pingers. */
 function TextField({ value, onChange }) {
@@ -74,11 +78,19 @@ function NumberField({ value, onCommit, min }) {
 
 export function RightPanel() {
   const tilemap = useStore(() => getTilemap());
+  const mode = useStore(() => getMode());
   const sun = tilemap.sun;
   const quality = tilemap.quality;
 
   return (
     <>
+      {mode === 'patrol' && <PatrolPanel />}
+      {mode === 'entities' && <EntityPanel />}
+      {/* NodePanel se muestra en ambos modos cuando hay un nodo
+          seleccionado. Mostrar el mismo panel en los dos sitios mantiene
+          la UX consistente: el panel de propiedades es el panel de
+          propiedades, da igual desde donde lo seleccionaste. */}
+      {(mode === 'patrol' || mode === 'entities') && <NodePanel />}
       <div className="panel">
         <div className="panel-title">Luz solar</div>
         <FormGroup label="Intensidad">
@@ -92,6 +104,15 @@ export function RightPanel() {
       <div className="panel">
         <div className="panel-title">Calidad</div>
         <ButtonGroup fill>
+          <Button
+            active={quality === 'flat'}
+            intent={quality === 'flat' ? 'primary' : 'none'}
+            onClick={() => setQuality('flat')}
+            icon="layout-grid"
+            title="Terreno aplanado (2 alturas), sin edificios ni decoración. La compilación más rápida — para testear gameplay."
+          >
+            Flat
+          </Button>
           <Button
             active={quality === 'fast'}
             intent={quality === 'fast' ? 'primary' : 'none'}

@@ -1,0 +1,2367 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Preparacion ISO — autor de casos</title>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    background: #1e1e1e;
+    color: #e0e0e0;
+    margin: 0;
+    padding: 16px;
+  }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+    font-size: 13px;
+    flex-wrap: wrap;
+  }
+  button {
+    background: #2d4a6a;
+    color: #e0e0e0;
+    border: 1px solid #4a6a8a;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { background: #3d5a7a; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.good { background: #2d6a3a; border-color: #4a8a5a; }
+  button.good:hover { background: #3d7a4a; }
+  button.almost { background: #6a5a2d; border-color: #8a7a4a; }
+  button.almost:hover { background: #7a6a3d; }
+  .meta { color: #888; font-size: 12px; margin-bottom: 12px; }
+  .ok { color: #6c6; }
+  .almost { color: #d4a256; }
+  .err { color: #c66; }
+  #galleryPanel { margin-top: 16px; }
+  #gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .galleryItem {
+    background: #1c1c1c;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 6px;
+  }
+  .galleryItem .name {
+    font-size: 11px;
+    color: #ccc;
+    margin-bottom: 4px;
+    text-align: center;
+    font-weight: bold;
+  }
+  .galleryItem .thumbs {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+  }
+  .galleryItem .thumb {
+    text-align: center;
+    font-size: 9px;
+    color: #888;
+  }
+  .galleryItem canvas {
+    background: #0a0a0a;
+    border-radius: 2px;
+    display: block;
+    margin: 0 auto 2px;
+  }
+  .galleryItem .thumb-icon {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 2px auto;
+    color: #888;
+  }
+  .galleryItem .thumb-icon svg { display: block; }
+  .galleryItem .kind-sep {
+    border-top: 1px solid #3a3a3a;
+    margin: 8px 0 6px;
+  }
+  .galleryItem .kind-ok {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #aaa;
+    cursor: pointer;
+    user-select: none;
+  }
+  .galleryItem .kind-ok input { cursor: pointer; margin: 0; }
+  .galleryItem.ok { border-color: #2d6a3a; box-shadow: 0 0 0 1px #2d6a3a inset; }
+  .galleryItem.ok .kind-ok { color: #6c6; }
+  .galleryItem.ok .name { color: #6c6; }
+  .stats {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-left: auto;
+    font-size: 14px;
+  }
+  .stats .stat { color: #aaa; }
+  .stats .stat b { color: #e0e0e0; font-weight: 700; margin-left: 4px; }
+  .stats .stat.ok b { color: #6c6; }
+  .stats .stat.almost b { color: #d4a256; }
+  .stats .stat.unk b { color: #ccc; }
+  .caseCode {
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    font-weight: bold;
+    color: #f0d060;
+    background: #2a2a2a;
+    border: 1px solid #4a4a4a;
+    border-radius: 4px;
+    padding: 4px 10px;
+    letter-spacing: 1px;
+  }
+  .layout { display: flex; gap: 24px; align-items: flex-start; }
+  .panel {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 12px;
+  }
+  .panel h2 { font-size: 13px; margin: 0 0 8px; color: #aaa; font-weight: normal; }
+  canvas { background: #111; border-radius: 4px; display: block; }
+  #topCanvas { cursor: pointer; }
+  .picker {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #ccc;
+    min-height: 60px;
+  }
+  .picker .row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+  .picker label { color: #888; margin-right: 4px; }
+  .picker button.dec {
+    background: #3a3a3a;
+    border-color: #555;
+    padding: 2px;
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+    color: #e0e0e0;
+  }
+  .picker button.dec svg { display: block; }
+  .picker button.dec.active {
+    background: #d4a256;
+    border-color: #d4a256;
+  }
+  .picker button.dec.active svg rect { stroke: #1a1a1a; }
+  .picker button.dec.recommended {
+    border-color: #d4a256;
+    box-shadow: 0 0 4px #d4a25688;
+  }
+  .picker button.clear {
+    background: #5a3a3a;
+    border-color: #7a4a4a;
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+  .hint { color: #888; font-size: 11px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>Preparacion ISO — autor de casos</h1>
+<div class="toolbar">
+  <button id="newCase">Nuevo caso</button>
+  <button id="unevaluated">Caso sin valorar</button>
+  <button id="newCaseQ">Caso con ?</button>
+  <input id="searchId" type="text" placeholder="ID (ej 0c5)" maxlength="4" style="width:80px;background:#222;color:#e0e0e0;border:1px solid #4a4a4a;border-radius:4px;padding:5px 8px;font-family:'Courier New',monospace;" />
+  <button id="searchBtn">Ir</button>
+  <button id="rotate">Rotar 90°</button>
+  <button id="saveGood" class="good">save quality=good</button>
+  <button id="saveAlmost" class="almost">save quality=almost</button>
+  <button id="clear">Limpiar decoraciones</button>
+  <span id="caseCode" class="caseCode"></span>
+  <span id="status" class="meta"></span>
+  <div id="stats" class="stats">
+    <span class="stat">total: <b id="statTotal">0</b></span>
+    <span class="stat ok">good: <b id="statGood">0</b></span>
+    <span class="stat almost">almost: <b id="statAlmost">0</b></span>
+    <span class="stat unk">unknown: <b id="statUnknown">0</b></span>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="panel">
+    <h2>Cenital (clic en celda vacia para editar)</h2>
+    <canvas id="topCanvas"></canvas>
+    <div class="picker" id="picker">
+      <div class="hint">Selecciona una celda vacia para colocar una decoracion.</div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Isometrica</h2>
+    <canvas id="isoCanvas"></canvas>
+  </div>
+</div>
+
+<div class="panel" id="galleryPanel">
+  <h2>Galeria de kinds (referencia)</h2>
+  <div id="gallery"></div>
+</div>
+
+<script>
+const CELL = 56;
+const ISO_TILE = 36;
+const ISO_H = 36;
+
+const DR = [-1, 0, 1, 0];
+const DC = [0, 1, 0, -1];
+const DDR = [-1, 1, 1, -1];
+const DDC = [1, 1, -1, -1];
+
+// Los `label` muestran el CODIGO TECNICO (igual que `kind`) en toda la UI,
+// no un nombre en castellano. Asi cualquier captura/pregunta del usuario
+// usa la misma jerga que el codigo y comunicarnos es mas claro.
+const KINDS = [
+  { kind: 'ramp',          label: 'ramp',          dirs: 4, dirLabels: ['N', 'E', 'S', 'O'] },
+  { kind: 'ramp_u',        label: 'ramp_u',        dirs: 2, dirLabels: ['NS', 'EO'] },
+  { kind: 'ramp_diag',     label: 'ramp_diag',     dirs: 4, dirLabels: ['NE', 'SE', 'SO', 'NO'] },
+  { kind: 'pit',           label: 'pit',           dirs: 1, dirLabels: ['+'] },
+  { kind: 'corner_in',     label: 'corner_in',     dirs: 4, dirLabels: ['NE', 'SE', 'SO', 'NO'] },
+  { kind: 'corner_out',    label: 'corner_out',    dirs: 4, dirLabels: ['NE', 'SE', 'SO', 'NO'] },
+  { kind: 'pyramid',       label: 'pyramid',       dirs: 1, dirLabels: ['+'] },
+  { kind: 'wedge',         label: 'wedge',         dirs: 4, dirLabels: ['NE', 'SE', 'SO', 'NO'] },
+  { kind: 'ramp_u_closed', label: 'ramp_u_closed', dirs: 4, dirLabels: ['openS', 'openO', 'openN', 'openE'] },
+  { kind: 'bridge_diag',   label: 'bridge_diag',   dirs: 2, dirLabels: ['NO-SE', 'NE-SO'] },
+  { kind: 'cube',          label: 'cube',          dirs: 1, dirLabels: ['+'] },
+  { kind: 'unknown',       label: 'unknown',       dirs: 1, dirLabels: ['?'] },
+];
+
+// Icono SVG de la decoracion+direccion. Devuelve un Node listo para appendChild.
+// Convencion: triangulo color rampa con el apice apuntando hacia el cubo (lado alto).
+function iconFor(kind, dir) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '20');
+  svg.setAttribute('height', '20');
+
+  const add = (tag, attrs) => {
+    const el = document.createElementNS(ns, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    svg.appendChild(el);
+    return el;
+  };
+
+  // Marco tenue.
+  add('rect', { x: 1, y: 1, width: 22, height: 22, fill: 'none', stroke: 'currentColor', 'stroke-opacity': '0.2' });
+
+  const fill = '#d4a256';
+  const stroke = '#3a2410';
+  if (kind === 'ramp') {
+    // Triangulo con apice apuntando al lado del cubo. N=0 apice arriba, etc.
+    let pts;
+    if (dir === 0)      pts = '12,3 4,20 20,20';   // apice N
+    else if (dir === 1) pts = '21,12 4,4 4,20';    // apice E
+    else if (dir === 2) pts = '12,21 4,4 20,4';    // apice S
+    else                pts = '3,12 20,4 20,20';   // apice O
+    add('polygon', { points: pts, fill, stroke, 'stroke-width': '1' });
+  } else if (kind === 'ramp_u') {
+    // Dos triangulos opuestos cuyos apices se tocan en el centro (representa el valle).
+    if (dir === 0) {
+      add('polygon', { points: '4,3 20,3 12,12', fill, stroke, 'stroke-width': '1' }); // N
+      add('polygon', { points: '4,21 20,21 12,12', fill, stroke, 'stroke-width': '1' }); // S
+    } else {
+      add('polygon', { points: '21,4 21,20 12,12', fill, stroke, 'stroke-width': '1' }); // E
+      add('polygon', { points: '3,4 3,20 12,12', fill, stroke, 'stroke-width': '1' });   // O
+    }
+  } else if (kind === 'ramp_diag') {
+    // Triangulo rectangulo con el angulo recto en la esquina diagonal (lado alto).
+    let pts;
+    if (dir === 0)      pts = '21,3 3,3 21,21';  // NE
+    else if (dir === 1) pts = '21,21 21,3 3,21'; // SE
+    else if (dir === 2) pts = '3,21 21,21 3,3';  // SO
+    else                pts = '3,3 3,21 21,3';   // NO
+    add('polygon', { points: pts, fill, stroke, 'stroke-width': '1' });
+  } else if (kind === 'pit') {
+    add('polygon', { points: '3,3 21,3 12,12', fill, stroke, 'stroke-width': '1' });
+    add('polygon', { points: '21,3 21,21 12,12', fill, stroke, 'stroke-width': '1' });
+    add('polygon', { points: '21,21 3,21 12,12', fill, stroke, 'stroke-width': '1' });
+    add('polygon', { points: '3,21 3,3 12,12', fill, stroke, 'stroke-width': '1' });
+  } else if (kind === 'corner_in') {
+    // Cuadrante coloreado en la esquina alta (NE/SE/SO/NO).
+    const corners = [
+      { hi: [21, 3],  adj1: [3, 3],  adj2: [21, 21] }, // NE
+      { hi: [21, 21], adj1: [21, 3], adj2: [3, 21] },  // SE
+      { hi: [3, 21],  adj1: [21, 21],adj2: [3, 3] },   // SO
+      { hi: [3, 3],   adj1: [3, 21], adj2: [21, 3] },  // NO
+    ];
+    const cn = corners[dir];
+    // Dibujamos un cuarto de circulo concentrado en la esquina opuesta (la baja).
+    const lo = [24 - cn.hi[0], 24 - cn.hi[1]];
+    add('path', {
+      d: `M ${cn.adj1[0]},${cn.adj1[1]} L ${cn.hi[0]},${cn.hi[1]} L ${cn.adj2[0]},${cn.adj2[1]} A 16 16 0 0 1 ${cn.adj1[0]},${cn.adj1[1]} Z`,
+      fill, stroke, 'stroke-width': '1',
+    });
+    // Marcamos la esquina alta con un punto.
+    add('circle', { cx: cn.hi[0], cy: cn.hi[1], r: 2, fill: stroke });
+  } else if (kind === 'corner_out') {
+    // Un triangulo apuntando a la esquina alta desde el centro de la celda.
+    const cs = [ [21, 3], [21, 21], [3, 21], [3, 3] ];
+    const hi = cs[dir];
+    // Triangulo: esquina alta + dos esquinas adyacentes a media distancia.
+    const adj1 = [(hi[0] + cs[(dir + 3) & 3][0]) / 2, (hi[1] + cs[(dir + 3) & 3][1]) / 2];
+    const adj2 = [(hi[0] + cs[(dir + 1) & 3][0]) / 2, (hi[1] + cs[(dir + 1) & 3][1]) / 2];
+    add('polygon', { points: `${hi[0]},${hi[1]} ${adj1[0]},${adj1[1]} ${adj2[0]},${adj2[1]}`, fill, stroke, 'stroke-width': '1' });
+    add('circle', { cx: hi[0], cy: hi[1], r: 2, fill: stroke });
+  } else if (kind === 'pyramid') {
+    // Cuatro triangulos convergiendo al centro alto.
+    add('polygon', { points: '3,3 21,3 12,12', fill: '#e8b870', stroke, 'stroke-width': '1' });
+    add('polygon', { points: '21,3 21,21 12,12', fill, stroke, 'stroke-width': '1' });
+    add('polygon', { points: '21,21 3,21 12,12', fill: '#b88040', stroke, 'stroke-width': '1' });
+    add('polygon', { points: '3,21 3,3 12,12', fill, stroke, 'stroke-width': '1' });
+    add('circle', { cx: 12, cy: 12, r: 2, fill: stroke });
+  } else if (kind === 'cube') {
+    add('rect', { x: 3, y: 3, width: 18, height: 18, fill: '#f0d060', stroke: '#3a2c00', 'stroke-width': '1' });
+  } else if (kind === 'wedge') {
+    let pts;
+    if (dir === 0)      pts = '21,3 21,21 3,3';
+    else if (dir === 1) pts = '21,21 3,21 21,3';
+    else if (dir === 2) pts = '3,21 3,3 21,21';
+    else                pts = '3,3 21,3 3,21';
+    add('polygon', { points: pts, fill, stroke, 'stroke-width': '1' });
+  } else if (kind === 'bridge_diag') {
+    // Cresta diagonal alta + dos triangulos inclinados a los dos lados.
+    // dir 0: cresta NW-SE, triangulos en NE y SW.
+    // dir 1: cresta NE-SO, triangulos en NW y SE.
+    if (dir === 0) {
+      add('polygon', { points: '3,3 21,21 21,3', fill, stroke, 'stroke-width': '1' });
+      add('polygon', { points: '3,3 21,21 3,21', fill, stroke, 'stroke-width': '1' });
+      add('line', { x1: 3, y1: 3, x2: 21, y2: 21, stroke: '#1a0e04', 'stroke-width': '2' });
+    } else {
+      add('polygon', { points: '21,3 3,21 3,3', fill, stroke, 'stroke-width': '1' });
+      add('polygon', { points: '21,3 3,21 21,21', fill, stroke, 'stroke-width': '1' });
+      add('line', { x1: 21, y1: 3, x2: 3, y2: 21, stroke: '#1a0e04', 'stroke-width': '2' });
+    }
+  } else if (kind === 'ramp_u_closed') {
+    // U cerrada por 3 lados; el icono es una U abierta hacia el lado dir.
+    // dir 0 = abre S: trazo en N, E, O.
+    // Dibujamos como tres rectangulos en los 3 lados cerrados.
+    const t = 4; // grosor del trazo de la U
+    const segs = [
+      { n: [3,3,18,t], e: [21-t,3,t,18], s: [3,21-t,18,t], o: [3,3,t,18] }, // dir 0 (abre S): N, E, O
+      { n: [3,3,18,t], e: [21-t,3,t,18], s: [3,21-t,18,t], o: [3,3,t,18] },
+    ][0];
+    // Mapear dir -> que lados pintamos.
+    const sidesByDir = {
+      0: ['N','E','O'], // abre S
+      1: ['N','E','S'], // abre O
+      2: ['E','S','O'], // abre N
+      3: ['N','S','O'], // abre E
+    };
+    const rects = { N: segs.n, E: segs.e, S: segs.s, O: segs.o };
+    for (const s of sidesByDir[dir]) {
+      const r = rects[s];
+      add('rect', { x: r[0], y: r[1], width: r[2], height: r[3], fill, stroke, 'stroke-width': '1' });
+    }
+  } else if (kind === 'unknown') {
+    add('rect', { x: 3, y: 3, width: 18, height: 18, fill: '#888', stroke: '#222', 'stroke-width': '1' });
+    const t = document.createElementNS(ns, 'text');
+    t.setAttribute('x', '12');
+    t.setAttribute('y', '17');
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('font-family', 'sans-serif');
+    t.setAttribute('font-size', '14');
+    t.setAttribute('font-weight', 'bold');
+    t.setAttribute('fill', '#eee');
+    t.textContent = '?';
+    svg.appendChild(t);
+  }
+  return svg;
+}
+
+function cubeAt(grid, r, c) {
+  if (r < 0 || r > 2 || c < 0 || c > 2) return false;
+  return !!grid[r][c];
+}
+
+// Hint geometrico: ¿esta decoracion encaja contra cubos reales? Se usa SOLO
+// como recomendacion visual, no para deshabilitar el boton.
+function isRecommended(grid, r, c, kind, dir) {
+  if (cubeAt(grid, r, c)) return false;
+  if (kind === 'ramp') return cubeAt(grid, r + DR[dir], c + DC[dir]);
+  if (kind === 'ramp_u') {
+    if (dir === 0) return cubeAt(grid, r - 1, c) && cubeAt(grid, r + 1, c);
+    if (dir === 1) return cubeAt(grid, r, c + 1) && cubeAt(grid, r, c - 1);
+    return false;
+  }
+  if (kind === 'ramp_diag') return cubeAt(grid, r + DDR[dir], c + DDC[dir]);
+  if (kind === 'pit' || kind === 'pyramid') {
+    return cubeAt(grid, r - 1, c) && cubeAt(grid, r + 1, c)
+        && cubeAt(grid, r, c - 1) && cubeAt(grid, r, c + 1);
+  }
+  if (kind === 'bridge_diag') {
+    // dir 0 = cresta NO-SE: requiere cubos diagonales en NO y SE.
+    // dir 1 = cresta NE-SO: requiere cubos diagonales en NE y SO.
+    if (dir === 0) return cubeAt(grid, r - 1, c - 1) && cubeAt(grid, r + 1, c + 1);
+    if (dir === 1) return cubeAt(grid, r - 1, c + 1) && cubeAt(grid, r + 1, c - 1);
+    return false;
+  }
+  if (kind === 'wedge') {
+    if (dir === 0) return cubeAt(grid, r - 1, c) && cubeAt(grid, r, c + 1);
+    if (dir === 1) return cubeAt(grid, r + 1, c) && cubeAt(grid, r, c + 1);
+    if (dir === 2) return cubeAt(grid, r + 1, c) && cubeAt(grid, r, c - 1);
+    if (dir === 3) return cubeAt(grid, r - 1, c) && cubeAt(grid, r, c - 1);
+    return false;
+  }
+  if (kind === 'ramp_u_closed') {
+    // 3 lados altos + 1 bajo. Recomendado si los 3 lados altos tienen cubo.
+    // dir 0 abre S: requiere cubos en N, E, O.
+    const need = [
+      [0, 1, 3], // dir 0: N, E, O
+      [0, 1, 2], // dir 1: N, E, S
+      [1, 2, 3], // dir 2: E, S, O
+      [0, 2, 3], // dir 3: N, S, O
+    ][dir] || [];
+    const DR_loc=[-1,0,1,0], DC_loc=[0,1,0,-1];
+    return need.every(i => cubeAt(grid, r + DR_loc[i], c + DC_loc[i]));
+  }
+  if (kind === 'corner_in' || kind === 'corner_out') {
+    // dir = esquina alta NE/SE/SO/NO. Recomendado si hay cubos en los dos lados
+    // ortogonales adyacentes a esa esquina.
+    if (dir === 0) return cubeAt(grid, r - 1, c) && cubeAt(grid, r, c + 1); // NE
+    if (dir === 1) return cubeAt(grid, r + 1, c) && cubeAt(grid, r, c + 1); // SE
+    if (dir === 2) return cubeAt(grid, r + 1, c) && cubeAt(grid, r, c - 1); // SO
+    if (dir === 3) return cubeAt(grid, r - 1, c) && cubeAt(grid, r, c - 1); // NO
+    return false;
+  }
+  return false;
+}
+
+let currentCase = null; // { id, cubes, grid }
+let decorations = [];   // [{ row, col, kind, dir }]
+let selectedCell = null; // { row, col } o null
+
+
+// === Render cenital =========================================================
+function drawTop() {
+  const canvas = document.getElementById('topCanvas');
+  const size = 3 * CELL + 2;
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, size, size);
+
+  const grid = currentCase.grid;
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      const x = c * CELL + 1, y = r * CELL + 1;
+      ctx.fillStyle = grid[r][c] ? '#6cf' : '#222';
+      ctx.fillRect(x, y, CELL - 1, CELL - 1);
+      if (selectedCell && selectedCell.row === r && selectedCell.col === c) {
+        ctx.strokeStyle = '#fc6';
+        ctx.lineWidth = 2;
+      } else {
+        ctx.strokeStyle = '#3a3a3a';
+        ctx.lineWidth = 1;
+      }
+      ctx.strokeRect(x + 0.5, y + 0.5, CELL - 2, CELL - 2);
+    }
+  }
+
+  for (const d of decorations) drawDecorationTop(ctx, d);
+}
+
+function drawDecorationTop(ctx, d) {
+  const x = d.col * CELL + 1, y = d.row * CELL + 1;
+  const cx = x + CELL / 2, cy = y + CELL / 2;
+  if (d.kind === 'ramp') {
+    drawTriangleArrow(ctx, x, y, d.dir);
+  } else if (d.kind === 'ramp_u') {
+    drawU(ctx, x, y, d.dir);
+  } else if (d.kind === 'ramp_diag') {
+    drawDiagTriangle(ctx, x, y, d.dir);
+  } else if (d.kind === 'pit') {
+    drawPitTop(ctx, x, y);
+  } else if (d.kind === 'corner_in') {
+    drawCornerInTop(ctx, x, y, d.dir);
+  } else if (d.kind === 'corner_out') {
+    drawCornerOutTop(ctx, x, y, d.dir);
+  } else if (d.kind === 'pyramid') {
+    drawPyramidTop(ctx, x, y);
+  } else if (d.kind === 'cube') {
+    drawCubeTop(ctx, x, y);
+  } else if (d.kind === 'wedge') {
+    drawWedgeTop(ctx, x, y, d.dir);
+  } else if (d.kind === 'ramp_u_closed') {
+    drawRampUClosedTop(ctx, x, y, d.dir);
+  } else if (d.kind === 'bridge_diag') {
+    drawBridgeDiagTop(ctx, x, y, d.dir);
+  } else if (d.kind === 'unknown') {
+    drawUnknownTop(ctx, x, y);
+  }
+}
+
+function drawBridgeDiagTop(ctx, x, y, dir) {
+  // Dos triangulos rellenos a ambos lados de la cresta diagonal.
+  const X0 = x + 4, X1 = x + CELL - 4;
+  const Y0 = y + 4, Y1 = y + CELL - 4;
+  ctx.fillStyle = '#d4a256';
+  ctx.strokeStyle = '#5a4422';
+  let pts1, pts2, crest;
+  if (dir === 0) {
+    // Cresta NO-SE: triangulos a los lados.
+    pts1 = [[X0, Y0], [X1, Y1], [X1, Y0]]; // NE
+    pts2 = [[X0, Y0], [X1, Y1], [X0, Y1]]; // SO
+    crest = [[X0, Y0], [X1, Y1]];
+  } else {
+    // Cresta NE-SO.
+    pts1 = [[X1, Y0], [X0, Y1], [X0, Y0]]; // NO
+    pts2 = [[X1, Y0], [X0, Y1], [X1, Y1]]; // SE
+    crest = [[X1, Y0], [X0, Y1]];
+  }
+  for (const pts of [pts1, pts2]) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]); ctx.lineTo(pts[1][0], pts[1][1]); ctx.lineTo(pts[2][0], pts[2][1]);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // Cresta diagonal mas marcada.
+  ctx.strokeStyle = '#1a0e04';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(crest[0][0], crest[0][1]); ctx.lineTo(crest[1][0], crest[1][1]);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
+function drawRampUClosedTop(ctx, x, y, dir) {
+  // Tres lados cerrados (altos) y un lado abierto. Visual: rectangulo con
+  // el lado "abre" mas pequeno y los demas pintados como pared/cresta.
+  const X0 = x + 4, X1 = x + CELL - 4;
+  const Y0 = y + 4, Y1 = y + CELL - 4;
+  const T = 6; // grosor de los lados altos
+  ctx.fillStyle = '#d4a256';
+  ctx.strokeStyle = '#5a4422';
+  const sides = {
+    N: [X0, Y0, X1 - X0, T],
+    E: [X1 - T, Y0, T, Y1 - Y0],
+    S: [X0, Y1 - T, X1 - X0, T],
+    O: [X0, Y0, T, Y1 - Y0],
+  };
+  const lookup = ['NEO', 'NES', 'ESO', 'NSO']; // dir -> lados altos
+  for (const s of lookup[dir]) {
+    const r = sides[s];
+    ctx.fillRect(r[0], r[1], r[2], r[3]);
+    ctx.strokeRect(r[0] + 0.5, r[1] + 0.5, r[2] - 1, r[3] - 1);
+  }
+}
+
+function drawWedgeTop(ctx, x, y, dir) {
+  const X0 = x + 4, X1 = x + CELL - 4;
+  const Y0 = y + 4, Y1 = y + CELL - 4;
+  let pts;
+  if (dir === 0)      pts = [[X1, Y0], [X1, Y1], [X0, Y0]]; // NE conservada
+  else if (dir === 1) pts = [[X1, Y1], [X0, Y1], [X1, Y0]]; // SE
+  else if (dir === 2) pts = [[X0, Y1], [X0, Y0], [X1, Y1]]; // SO
+  else                pts = [[X0, Y0], [X1, Y0], [X0, Y1]]; // NO
+  ctx.fillStyle = '#d4a256';
+  ctx.strokeStyle = '#5a4422';
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]); ctx.lineTo(pts[1][0], pts[1][1]); ctx.lineTo(pts[2][0], pts[2][1]);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+}
+
+function diagCornerTriangle(ctx, x, y, corner) {
+  // Triangulo cuya esquina apunta a la esquina indicada (0=NE,1=SE,2=SO,3=NO),
+  // con apice en el centro de la celda.
+  const X0 = x + 4, X1 = x + CELL - 4;
+  const Y0 = y + 4, Y1 = y + CELL - 4;
+  const cx = x + CELL / 2, cy = y + CELL / 2;
+  let pts;
+  if (corner === 0)      pts = [[X1, Y0], [X1, Y1], [cx, cy]];  // NE
+  else if (corner === 1) pts = [[X1, Y1], [X0, Y1], [cx, cy]];  // SE
+  else if (corner === 2) pts = [[X0, Y1], [X0, Y0], [cx, cy]];  // SO
+  else                   pts = [[X0, Y0], [X1, Y0], [cx, cy]];  // NO
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]); ctx.lineTo(pts[1][0], pts[1][1]); ctx.lineTo(pts[2][0], pts[2][1]);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+}
+
+function drawUnknownTop(ctx, x, y) {
+  ctx.fillStyle = '#888';
+  ctx.fillRect(x + 4, y + 4, CELL - 8, CELL - 8);
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 4.5, y + 4.5, CELL - 9, CELL - 9);
+  ctx.fillStyle = '#eee';
+  ctx.font = 'bold ' + Math.floor(CELL * 0.55) + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('?', x + CELL / 2, y + CELL / 2 + 1);
+}
+
+function drawCubeTop(ctx, x, y) {
+  ctx.fillStyle = '#f0d060';
+  ctx.fillRect(x + 4, y + 4, CELL - 8, CELL - 8);
+  ctx.strokeStyle = '#3a2c00';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 4.5, y + 4.5, CELL - 9, CELL - 9);
+}
+
+
+function drawCornerInTop(ctx, x, y, dir) {
+  const X0 = x + 4, X1 = x + CELL - 4;
+  const Y0 = y + 4, Y1 = y + CELL - 4;
+  const cx = x + CELL / 2, cy = y + CELL / 2;
+  ctx.fillStyle = '#d4a256';
+  ctx.strokeStyle = '#5a4422';
+  // Triangulo del cuadrante de la esquina alta: la esquina alta + sus dos
+  // esquinas adyacentes (mas altas tambien).
+  let pts;
+  if (dir === 0)      pts = [[X1, Y0], [X0, Y0], [X1, Y1]]; // NE alto
+  else if (dir === 1) pts = [[X1, Y1], [X1, Y0], [X0, Y1]]; // SE alto
+  else if (dir === 2) pts = [[X0, Y1], [X1, Y1], [X0, Y0]]; // SO alto
+  else                pts = [[X0, Y0], [X0, Y1], [X1, Y0]]; // NO alto
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]); ctx.lineTo(pts[1][0], pts[1][1]); ctx.lineTo(pts[2][0], pts[2][1]);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  // Punto marcador en la esquina alta.
+  ctx.fillStyle = '#1a0e04';
+  ctx.beginPath(); ctx.arc(pts[0][0], pts[0][1], 3, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawCornerOutTop(ctx, x, y, dir) {
+  const X0 = x + 4, X1 = x + CELL - 4;
+  const Y0 = y + 4, Y1 = y + CELL - 4;
+  const cs = [[X1, Y0], [X1, Y1], [X0, Y1], [X0, Y0]]; // NE SE SO NO
+  const hi = cs[dir];
+  const adjA = cs[(dir + 3) & 3];
+  const adjB = cs[(dir + 1) & 3];
+  const mA = [(hi[0] + adjA[0]) / 2, (hi[1] + adjA[1]) / 2];
+  const mB = [(hi[0] + adjB[0]) / 2, (hi[1] + adjB[1]) / 2];
+  ctx.fillStyle = '#d4a256';
+  ctx.strokeStyle = '#5a4422';
+  ctx.beginPath();
+  ctx.moveTo(hi[0], hi[1]); ctx.lineTo(mA[0], mA[1]); ctx.lineTo(mB[0], mB[1]);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#1a0e04';
+  ctx.beginPath(); ctx.arc(hi[0], hi[1], 3, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawPyramidTop(ctx, x, y) {
+  const X0 = x + 4, X1 = x + CELL - 4;
+  const Y0 = y + 4, Y1 = y + CELL - 4;
+  const cx = x + CELL / 2, cy = y + CELL / 2;
+  ctx.strokeStyle = '#5a4422';
+  const tris = [
+    { tri: [[X0, Y0], [X1, Y0], [cx, cy]], color: '#e8b870' }, // N
+    { tri: [[X1, Y0], [X1, Y1], [cx, cy]], color: '#d4a256' }, // E
+    { tri: [[X1, Y1], [X0, Y1], [cx, cy]], color: '#b88040' }, // S
+    { tri: [[X0, Y1], [X0, Y0], [cx, cy]], color: '#d4a256' }, // O
+  ];
+  for (const t of tris) {
+    ctx.fillStyle = t.color;
+    ctx.beginPath();
+    ctx.moveTo(t.tri[0][0], t.tri[0][1]); ctx.lineTo(t.tri[1][0], t.tri[1][1]); ctx.lineTo(t.tri[2][0], t.tri[2][1]);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  ctx.fillStyle = '#1a0e04';
+  ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fill();
+}
+
+
+function drawPitTop(ctx, x, y) {
+  const X0 = x + 4, X1 = x + CELL - 4;
+  const Y0 = y + 4, Y1 = y + CELL - 4;
+  const cx = x + CELL / 2, cy = y + CELL / 2;
+  ctx.fillStyle = '#d4a256';
+  ctx.strokeStyle = '#5a4422';
+  for (const tri of [
+    [[X0, Y0], [X1, Y0], [cx, cy]], // N
+    [[X1, Y0], [X1, Y1], [cx, cy]], // E
+    [[X1, Y1], [X0, Y1], [cx, cy]], // S
+    [[X0, Y1], [X0, Y0], [cx, cy]], // O
+  ]) {
+    ctx.beginPath();
+    ctx.moveTo(tri[0][0], tri[0][1]);
+    ctx.lineTo(tri[1][0], tri[1][1]);
+    ctx.lineTo(tri[2][0], tri[2][1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+function drawTriangleArrow(ctx, x, y, dir) {
+  let apex, b1, b2;
+  if (dir === 0)      { apex = [x + CELL/2, y + 4]; b1 = [x + 6, y + CELL - 6]; b2 = [x + CELL - 6, y + CELL - 6]; }
+  else if (dir === 1) { apex = [x + CELL - 4, y + CELL/2]; b1 = [x + 6, y + 6]; b2 = [x + 6, y + CELL - 6]; }
+  else if (dir === 2) { apex = [x + CELL/2, y + CELL - 4]; b1 = [x + 6, y + 6]; b2 = [x + CELL - 6, y + 6]; }
+  else                { apex = [x + 4, y + CELL/2]; b1 = [x + CELL - 6, y + 6]; b2 = [x + CELL - 6, y + CELL - 6]; }
+  ctx.fillStyle = '#d4a256';
+  ctx.beginPath();
+  ctx.moveTo(apex[0], apex[1]); ctx.lineTo(b1[0], b1[1]); ctx.lineTo(b2[0], b2[1]); ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#5a4422';
+  ctx.stroke();
+}
+
+// U cenital: dos triangulos con la base contra el lado del cubo y el apice en
+// la linea media de la celda (representando el valle). dir 0 = NS, dir 1 = EO.
+function drawU(ctx, x, y, dir) {
+  ctx.fillStyle = '#d4a256';
+  ctx.strokeStyle = '#5a4422';
+  if (dir === 0) {
+    // Mitad N: base = arista N, apice = centro horizontal.
+    ctx.beginPath();
+    ctx.moveTo(x + 6, y + 6); ctx.lineTo(x + CELL - 6, y + 6); ctx.lineTo(x + CELL/2, y + CELL/2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    // Mitad S: base = arista S, apice = centro.
+    ctx.beginPath();
+    ctx.moveTo(x + 6, y + CELL - 6); ctx.lineTo(x + CELL - 6, y + CELL - 6); ctx.lineTo(x + CELL/2, y + CELL/2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  } else {
+    // Mitad E:
+    ctx.beginPath();
+    ctx.moveTo(x + CELL - 6, y + 6); ctx.lineTo(x + CELL - 6, y + CELL - 6); ctx.lineTo(x + CELL/2, y + CELL/2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    // Mitad O:
+    ctx.beginPath();
+    ctx.moveTo(x + 6, y + 6); ctx.lineTo(x + 6, y + CELL - 6); ctx.lineTo(x + CELL/2, y + CELL/2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+}
+
+function drawDiagTriangle(ctx, x, y, dir) {
+  // El apice apunta a la esquina diagonal (NE/SE/SO/NO). La base es la diagonal opuesta.
+  // NE = (-1,+1): apice en esquina superior-derecha.
+  let apex, b1, b2;
+  const X0 = x + 4, X1 = x + CELL - 4;
+  const Y0 = y + 4, Y1 = y + CELL - 4;
+  if (dir === 0)      { apex = [X1, Y0]; b1 = [X0, Y0]; b2 = [X1, Y1]; } // NE
+  else if (dir === 1) { apex = [X1, Y1]; b1 = [X1, Y0]; b2 = [X0, Y1]; } // SE
+  else if (dir === 2) { apex = [X0, Y1]; b1 = [X1, Y1]; b2 = [X0, Y0]; } // SO
+  else                { apex = [X0, Y0]; b1 = [X0, Y1]; b2 = [X1, Y0]; } // NO
+  ctx.fillStyle = '#d4a256';
+  ctx.beginPath();
+  ctx.moveTo(apex[0], apex[1]); ctx.lineTo(b1[0], b1[1]); ctx.lineTo(b2[0], b2[1]); ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#5a4422';
+  ctx.stroke();
+}
+
+// === Render isometrico ======================================================
+function isoProject(col, row, z, ox, oy) {
+  return [ ox + (col - row) * ISO_TILE,
+           oy + (col + row) * (ISO_TILE / 2) - z * ISO_H ];
+}
+function fillPoly(ctx, pts) {
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath(); ctx.fill();
+}
+function strokePoly(ctx, pts) {
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath(); ctx.stroke();
+}
+
+// === Iluminacion isometrica ================================================
+// Asumimos sol orientado a la derecha+frente+arriba: vector (+1, +0.4, +0.6)
+// normalizado. Las normales de cara apuntan: cara este = (+1,0,0); norte =
+// (0,-1,0); arriba = (0,0,+1). La normal de un plano inclinado se calcula a
+// partir de 3 vertices (en coords del grid: col, row, z).
+// Luz fuerte hacia +x (derecha) con un poco de +y (frente) y +z (arriba). Esto
+// hace que las caras este/sur queden claras y las oeste/norte muy oscuras.
+const LIGHT = (() => {
+  const v = [1.0, 0.25, 0.45];
+  const len = Math.hypot(v[0], v[1], v[2]);
+  return [v[0] / len, v[1] / len, v[2] / len];
+})();
+
+function normalize3(v) {
+  const len = Math.hypot(v[0], v[1], v[2]);
+  return len > 0 ? [v[0] / len, v[1] / len, v[2] / len] : [0, 0, 1];
+}
+function cross3(a, b) {
+  return [a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]];
+}
+function sub3(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+
+// Calcula la normal de la cara orientada hacia el espectador. La camara iso
+// mira desde (+y, +z) hacia (-y, -z), asi que una cara visible tiene su normal
+// con n . (0,+y,+z) > 0 aproximadamente. Si no, invertimos.
+// Calcula la normal de un poligono asumiendo que los vertices estan en orden
+// CCW visto desde fuera (es decir, desde el lado donde queremos que apunte la
+// normal). Para garantizar coherencia, los llamadores invocan drawShadedFace
+// con un vector outward opcional; faceNormal solo calcula y, si el outward
+// fue pasado, comprueba el signo.
+function faceNormal(p3a, p3b, p3c, outward) {
+  let n = normalize3(cross3(sub3(p3b, p3a), sub3(p3c, p3a)));
+  if (outward) {
+    const dot = n[0]*outward[0] + n[1]*outward[1] + n[2]*outward[2];
+    if (dot < 0) n = [-n[0], -n[1], -n[2]];
+    return n;
+  }
+  // Heuristica para superficies sin outward explicito (rampas, conos, etc.):
+  // preferimos la orientacion con z>=0 (la cara mira hacia arriba). Si z es
+  // exactamente 0 (cara vertical), preferimos sum(x+y) >= 0.
+  if (n[2] < -1e-6) n = [-n[0], -n[1], -n[2]];
+  else if (Math.abs(n[2]) <= 1e-6 && n[0] + n[1] < 0) n = [-n[0], -n[1], -n[2]];
+  return n;
+}
+
+// Brillo en [0,1] dado la normal (en coords del grid, con +x=este, +y=sur, +z=arriba).
+// dot >= 0  => cara iluminada (este/sur/arriba): brillo en [0.55, 1.0]
+// dot <  0  => cara en sombra (oeste/norte): brillo en [0.05, 0.55]
+// Asi la diferencia entre cara iluminada y sombreada es muy visible.
+function brightnessFromNormal(n) {
+  const dot = n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2];
+  if (dot >= 0) return 0.55 + 0.45 * dot;
+  return 0.55 + 0.5 * dot; // dot en [-1,0] => brillo en [0.05, 0.55]
+}
+
+// Aplica brillo a un color hex base.
+function shade(hex, brightness) {
+  // hex puede ser #rgb o #rrggbb.
+  let r, g, b;
+  if (hex.length === 4) {
+    r = parseInt(hex[1] + hex[1], 16);
+    g = parseInt(hex[2] + hex[2], 16);
+    b = parseInt(hex[3] + hex[3], 16);
+  } else {
+    r = parseInt(hex.slice(1, 3), 16);
+    g = parseInt(hex.slice(3, 5), 16);
+    b = parseInt(hex.slice(5, 7), 16);
+  }
+  // No multiplicamos linealmente; mezclamos hacia blanco/negro segun signo.
+  const t = brightness; // 0..1
+  if (t >= 0.5) {
+    // Aclaramos hacia blanco (modesto, las caras claras se quedan saturadas).
+    const k = (t - 0.5) * 0.6;
+    r = Math.round(r + (255 - r) * k);
+    g = Math.round(g + (255 - g) * k);
+    b = Math.round(b + (255 - b) * k);
+  } else {
+    // Oscurecemos agresivamente hacia negro (las sombras se notan mucho).
+    const k = (0.5 - t) * 1.85;
+    r = Math.round(r * Math.max(0, 1 - k));
+    g = Math.round(g * Math.max(0, 1 - k));
+    b = Math.round(b * Math.max(0, 1 - k));
+  }
+  r = Math.max(0, Math.min(255, r));
+  g = Math.max(0, Math.min(255, g));
+  b = Math.max(0, Math.min(255, b));
+  return '#' + r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0');
+}
+
+// Dibuja un poligono iso a partir de vertices en coords (col,row,z) directamente,
+// aplicando iluminacion al color base segun la normal del plano. Devuelve los
+// puntos proyectados por si los necesitas para trazar.
+// === Scene buffer (painter's algorithm global) =============================
+// Para resolver correctamente caras tapadas y aristas ocultas, acumulamos
+// TODAS las caras visibles de la escena antes de pintar, las ordenamos por
+// profundidad, y pintamos lejos -> cerca. Una arista oculta por una cara mas
+// cercana queda tapada de forma natural al ser dibujada despues.
+//
+// Mientras __scene === null funcionamos en modo directo (compatibilidad),
+// pero el path normal es: beginScene(ctx, ox, oy); ...calls...; flushScene();
+let __scene = null; // { ctx, ox, oy, faces: [], overlays: [] }
+
+function beginScene(ctx, ox, oy) {
+  __scene = { ctx, ox, oy, faces: [], overlays: [] };
+}
+
+// Permite registrar callbacks que se ejecutan tras el flush de las caras,
+// con el ctx ya pintado. Util para texto u otros elementos 2D encima.
+function addOverlay(fn) {
+  if (__scene) __scene.overlays.push(fn);
+  else fn();
+}
+
+// Profundidad de una cara: el promedio de y proyectada sobre todos los
+// vertices. Usar el promedio (centroide) en lugar del maximo evita empates
+// frecuentes entre caras grandes y produce un orden mas estable: la cara que
+// "ocupa" mayor parte del fondo se pinta primero, la que llega mas adelante
+// se pinta encima. Es lo que recomienda el algoritmo de pintor clasico.
+function faceDepth(vertsCRZ) {
+  let sumY = 0;
+  for (const v of vertsCRZ) {
+    sumY += (v[0] + v[1]) * (ISO_TILE / 2) - v[2] * ISO_H;
+  }
+  return sumY / vertsCRZ.length;
+}
+
+// Maximo de la depth: util como desempate fino (caras que llegan mas
+// adelante en pantalla deben quedar encima cuando los centroides empatan).
+function faceDepthMax(vertsCRZ) {
+  let m = -Infinity;
+  for (const v of vertsCRZ) {
+    const d = (v[0] + v[1]) * (ISO_TILE / 2) - v[2] * ISO_H;
+    if (d > m) m = d;
+  }
+  return m;
+}
+
+// Centro de la cara en (col,row,z); util como desempate fino para evitar
+// flickering entre caras coplanares de la misma celda.
+function faceCenter(vertsCRZ) {
+  let sx = 0, sy = 0, sz = 0;
+  for (const v of vertsCRZ) { sx += v[0]; sy += v[1]; sz += v[2]; }
+  const k = vertsCRZ.length;
+  return [sx / k, sy / k, sz / k];
+}
+
+function drawShadedFace(ctx, baseColor, vertsCRZ, ox, oy, outward) {
+  if (vertsCRZ.length < 3) return;
+  const n = faceNormal(vertsCRZ[0], vertsCRZ[1], vertsCRZ[2], outward);
+  const b = brightnessFromNormal(n);
+  const fill = shade(baseColor, b);
+  if (__scene) {
+    __scene.faces.push({
+      verts: vertsCRZ.slice(),
+      fill,
+      stroke: '#000',
+      depth: faceDepth(vertsCRZ),
+      depthMax: faceDepthMax(vertsCRZ),
+      centerZ: faceCenter(vertsCRZ)[2],
+      order: __scene.faces.length,
+    });
+    return;
+  }
+  // Modo directo (fallback).
+  const proj = vertsCRZ.map(v => isoProject(v[0], v[1], v[2], ox, oy));
+  ctx.fillStyle = fill;
+  fillPoly(ctx, proj);
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 0.8;
+  ctx.lineJoin = 'round';
+  strokePoly(ctx, proj);
+}
+
+// strokeFace queda como no-op (las aristas las dibuja flushScene junto con
+// el fill). Si pasas color explicito, dibuja igualmente para casos en que
+// quieras reforzar la silueta encima de todo.
+function strokeFace(ctx, vertsCRZ, ox, oy, color) {
+  if (!color) return;
+  const proj = vertsCRZ.map(v => isoProject(v[0], v[1], v[2], ox, oy));
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 0.75;
+  ctx.lineJoin = 'round';
+  strokePoly(ctx, proj);
+}
+
+// Dibuja unicamente las aristas que aparecen en exactamente UNA cara del
+// scene buffer; las que aparecen en >= 2 caras son aristas compartidas
+// (internas del modelo) y no se dibujan. Asi cada arista visible se dibuja
+// una sola vez en el borde "real" del objeto.
+function drawSilhouetteEdges(ctx, faces, ox, oy) {
+  const edgeCount = new Map(); // key 'x1,y1,z1|x2,y2,z2' -> count
+  const eps = 1e-3;
+  function key(a, b) {
+    // Normalizamos orden de vertices para que (A,B) == (B,A).
+    const ra = a.map(x => Math.round(x / eps) * eps);
+    const rb = b.map(x => Math.round(x / eps) * eps);
+    const sa = ra.join(',');
+    const sb = rb.join(',');
+    return sa < sb ? sa + '|' + sb : sb + '|' + sa;
+  }
+  for (const f of faces) {
+    for (let i = 0; i < f.verts.length; i++) {
+      const a = f.verts[i];
+      const b = f.verts[(i + 1) % f.verts.length];
+      const k = key(a, b);
+      edgeCount.set(k, (edgeCount.get(k) || 0) + 1);
+    }
+  }
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 0.8;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  const drawn = new Set();
+  for (const f of faces) {
+    for (let i = 0; i < f.verts.length; i++) {
+      const a = f.verts[i];
+      const b = f.verts[(i + 1) % f.verts.length];
+      const k = key(a, b);
+      if (drawn.has(k)) continue;
+      if (edgeCount.get(k) === 1) {
+        const pa = isoProject(a[0], a[1], a[2], ox, oy);
+        const pb = isoProject(b[0], b[1], b[2], ox, oy);
+        ctx.beginPath();
+        ctx.moveTo(pa[0], pa[1]);
+        ctx.lineTo(pb[0], pb[1]);
+        ctx.stroke();
+      }
+      drawn.add(k);
+    }
+  }
+}
+
+function flushScene() {
+  if (!__scene) return;
+  const { ctx, ox, oy, faces } = __scene;
+  // Orden de pintor: lejos -> cerca, con sesgo de "arriba antes que abajo".
+  // El truco principal: cuando dos caras compiten por depth similar, pintamos
+  // primero la mas ALTA (centerZ mayor); la cara baja se pinta despues y, si
+  // tapa parcialmente, oculta cualquier error visual en la cara alta. Es la
+  // heuristica clasica en tile rendering isometrico.
+  faces.sort((a, b) => {
+    const eps = 1e-3;
+    if (Math.abs(a.depth - b.depth) > eps) return a.depth - b.depth;
+    // Caras altas primero: invertimos el orden de centerZ (z mayor antes).
+    if (Math.abs(a.centerZ - b.centerZ) > eps) return b.centerZ - a.centerZ;
+    if (Math.abs(a.depthMax - b.depthMax) > eps) return a.depthMax - b.depthMax;
+    return a.order - b.order;
+  });
+  // Pintamos solo los rellenos. NO dibujamos strokes en las aristas de cada
+  // cara: el sombreado por iluminacion ya distingue caras adyacentes (cada
+  // una tiene un tono distinto segun su normal). Dibujar strokes individuales
+  // por cara duplica las aristas (cada arista 3D la comparten dos caras),
+  // lo cual produce lineas espurias sobre las caras vecinas en pantalla.
+  for (const f of faces) {
+    const proj = f.verts.map(v => isoProject(v[0], v[1], v[2], ox, oy));
+    ctx.fillStyle = f.fill;
+    fillPoly(ctx, proj);
+  }
+  // Tras pintar todos los rellenos, dibujamos UNA arista por cada pareja de
+  // vertices que aparezca solo en una cara visible — la silueta externa.
+  // Para simplicidad y suficiencia: detectamos aristas que aparecen en una
+  // sola cara del scene buffer y las dibujamos. Aristas compartidas entre
+  // dos caras (internas del modelo) no se dibujan, evitando duplicacion.
+  drawSilhouetteEdges(ctx, faces, ox, oy);
+  const overlays = __scene.overlays;
+  __scene = null;
+  for (const fn of overlays) fn(ctx);
+}
+
+function drawCube(ctx, col, row, ox, oy) {
+  const BASE = '#5aa8d0';
+  const tNW = [col, row, 1], tNE = [col + 1, row, 1];
+  const tSE = [col + 1, row + 1, 1], tSW = [col, row + 1, 1];
+  const bNE = [col + 1, row, 0], bSE = [col + 1, row + 1, 0], bSW = [col, row + 1, 0];
+  // Mini-escena local para que las aristas internas compartidas entre techo,
+  // cara este y cara sur no se dibujen duplicadas. La silueta del cubo se
+  // genera automaticamente al final.
+  const wasInScene = __scene !== null;
+  if (!wasInScene) beginScene(ctx, ox, oy);
+  drawShadedFace(ctx, BASE, [tNE, tSE, bSE, bNE], ox, oy, [1, 0, 0]);  // este
+  drawShadedFace(ctx, BASE, [tSE, tSW, bSW, bSE], ox, oy, [0, 1, 0]);  // sur
+  drawShadedFace(ctx, BASE, [tNW, tNE, tSE, tSW], ox, oy, [0, 0, 1]);  // techo
+  if (!wasInScene) flushScene();
+}
+
+// Rampa ortogonal: dir 0=N alto, 1=E alto, 2=S alto, 3=O alto.
+function drawRampOrtho(ctx, col, row, dir, ox, oy) {
+  const BASE = '#d4a256';
+  const b00 = [col, row, 0], b10 = [col + 1, row, 0];
+  const b11 = [col + 1, row + 1, 0], b01 = [col, row + 1, 0];
+  const t00 = [col, row, 1], t10 = [col + 1, row, 1];
+  const t11 = [col + 1, row + 1, 1], t01 = [col, row + 1, 1];
+  // Outward del plano principal: opuesto a la direccion del cubo soporte +z.
+  // dir 0 (N alto) -> rampa mirando al sur+arriba => (0,+1,+1).
+  // dir 1 (E alto) -> (-1,0,+1). dir 2 (S alto) -> (0,-1,+1). dir 3 (O alto) -> (+1,0,+1).
+  // No: si N esta alto, la rampa baja hacia el sur, y el plano mira hacia el SUR.
+  // Lo planteo desde el bajo hacia el alto: el plano mira AL CIELO inclinado HACIA EL LADO BAJO.
+  // dir 0 (N alto): lado bajo S => plano mira (0,+1,+1)/sqrt(2).
+  // dir 1 (E alto): lado bajo O => plano mira (-1,0,+1).
+  // dir 2 (S alto): lado bajo N => plano mira (0,-1,+1).
+  // dir 3 (O alto): lado bajo E => plano mira (+1,0,+1).
+  let hi1, hi2, lo1, lo2, under1, under2, planeOut, sideOut1, sideOut2;
+  if (dir === 0) {
+    hi1 = t00; hi2 = t10; lo1 = b01; lo2 = b11; under1 = b00; under2 = b10;
+    planeOut = [0, 1, 1]; sideOut1 = [-1, 0, 0]; sideOut2 = [1, 0, 0];
+  } else if (dir === 1) {
+    hi1 = t10; hi2 = t11; lo1 = b00; lo2 = b01; under1 = b10; under2 = b11;
+    planeOut = [-1, 0, 1]; sideOut1 = [0, -1, 0]; sideOut2 = [0, 1, 0];
+  } else if (dir === 2) {
+    hi1 = t01; hi2 = t11; lo1 = b00; lo2 = b10; under1 = b01; under2 = b11;
+    planeOut = [0, -1, 1]; sideOut1 = [-1, 0, 0]; sideOut2 = [1, 0, 0];
+  } else {
+    hi1 = t00; hi2 = t01; lo1 = b10; lo2 = b11; under1 = b00; under2 = b01;
+    planeOut = [1, 0, 1]; sideOut1 = [0, -1, 0]; sideOut2 = [0, 1, 0];
+  }
+  drawShadedFace(ctx, BASE, [hi1, under1, lo1], ox, oy, sideOut1);
+  drawShadedFace(ctx, BASE, [hi2, under2, lo2], ox, oy, sideOut2);
+  drawShadedFace(ctx, BASE, [hi1, hi2, lo2, lo1], ox, oy, planeOut);
+  strokeFace(ctx, [hi1, hi2, lo2, lo1], ox, oy);
+  strokeFace(ctx, [hi1, under1, lo1], ox, oy);
+  strokeFace(ctx, [hi2, under2, lo2], ox, oy);
+}
+
+// Rampa U: dos medias rampas con valle (z=0) en la mitad de la celda.
+// dir 0 = NS (sube al N y al S, valle horizontal). dir 1 = EO.
+function drawRampU(ctx, col, row, dir, ox, oy) {
+  const BASE = '#d4a256';
+  const b00 = [col, row, 0], b10 = [col + 1, row, 0];
+  const b11 = [col + 1, row + 1, 0], b01 = [col, row + 1, 0];
+  const t00 = [col, row, 1], t10 = [col + 1, row, 1];
+  const t11 = [col + 1, row + 1, 1], t01 = [col, row + 1, 1];
+  const bMidW = [col, row + 0.5, 0], bMidE = [col + 1, row + 0.5, 0];
+  const bMidN = [col + 0.5, row, 0], bMidS = [col + 0.5, row + 1, 0];
+
+  if (dir === 0) {
+    // Mitad N (lejos): plano mira hacia el sur+arriba (0,+1,+1).
+    drawShadedFace(ctx, BASE, [t00, t10, bMidE, bMidW], ox, oy, [0, 1, 1]);
+    drawShadedFace(ctx, BASE, [t00, b00, bMidW], ox, oy, [-1, 0, 0]);
+    drawShadedFace(ctx, BASE, [t10, b10, bMidE], ox, oy, [1, 0, 0]);
+    strokeFace(ctx, [t00, t10, bMidE, bMidW], ox, oy);
+    strokeFace(ctx, [t00, b00, bMidW], ox, oy);
+    strokeFace(ctx, [t10, b10, bMidE], ox, oy);
+    // Mitad S (cerca): plano mira hacia el norte+arriba (0,-1,+1).
+    drawShadedFace(ctx, BASE, [t01, t11, bMidE, bMidW], ox, oy, [0, -1, 1]);
+    drawShadedFace(ctx, BASE, [t01, b01, bMidW], ox, oy, [-1, 0, 0]);
+    drawShadedFace(ctx, BASE, [t11, b11, bMidE], ox, oy, [1, 0, 0]);
+    strokeFace(ctx, [t01, t11, bMidE, bMidW], ox, oy);
+    strokeFace(ctx, [t01, b01, bMidW], ox, oy);
+    strokeFace(ctx, [t11, b11, bMidE], ox, oy);
+  } else {
+    // Mitad O (lejos): plano mira hacia el este+arriba (+1,0,+1).
+    drawShadedFace(ctx, BASE, [t00, t01, bMidS, bMidN], ox, oy, [1, 0, 1]);
+    drawShadedFace(ctx, BASE, [t00, b00, bMidN], ox, oy, [0, -1, 0]);
+    drawShadedFace(ctx, BASE, [t01, b01, bMidS], ox, oy, [0, 1, 0]);
+    strokeFace(ctx, [t00, t01, bMidS, bMidN], ox, oy);
+    strokeFace(ctx, [t00, b00, bMidN], ox, oy);
+    strokeFace(ctx, [t01, b01, bMidS], ox, oy);
+    // Mitad E (cerca): plano mira hacia el oeste+arriba (-1,0,+1).
+    drawShadedFace(ctx, BASE, [t10, t11, bMidS, bMidN], ox, oy, [-1, 0, 1]);
+    drawShadedFace(ctx, BASE, [t10, b10, bMidN], ox, oy, [0, -1, 0]);
+    drawShadedFace(ctx, BASE, [t11, b11, bMidS], ox, oy, [0, 1, 0]);
+    strokeFace(ctx, [t10, t11, bMidS, bMidN], ox, oy);
+    strokeFace(ctx, [t10, b10, bMidN], ox, oy);
+    strokeFace(ctx, [t11, b11, bMidS], ox, oy);
+  }
+}
+
+// Rampa diagonal: el lado alto es la esquina diagonal, el bajo la esquina opuesta.
+// Modelamos como un triangulo alto (en z=1) en la esquina diagonal y dos
+// triangulos inclinados conectandolo al suelo.
+function drawRampDiag(ctx, col, row, dir, ox, oy) {
+  const BASE = '#d4a256';
+  const b00 = [col, row, 0], b10 = [col + 1, row, 0];
+  const b11 = [col + 1, row + 1, 0], b01 = [col, row + 1, 0];
+  const t10 = [col + 1, row, 1], t11 = [col + 1, row + 1, 1];
+  const t01 = [col, row + 1, 1], t00 = [col, row, 1];
+  // dir: 0=NE, 1=SE, 2=SO, 3=NO; hi en grid:
+  let hi, hiBase, n1, n2, lo;
+  if (dir === 0)      { hi = t10; hiBase = b10; n1 = b00; n2 = b11; lo = b01; }
+  else if (dir === 1) { hi = t11; hiBase = b11; n1 = b10; n2 = b01; lo = b00; }
+  else if (dir === 2) { hi = t01; hiBase = b01; n1 = b11; n2 = b00; lo = b10; }
+  else                { hi = t00; hiBase = b00; n1 = b01; n2 = b10; lo = b11; }
+  // Dos caras laterales verticales (entre hiBase, hi y cada esquina adyacente)
+  // y dos caras inclinadas (la rampa propiamente).
+  drawShadedFace(ctx, BASE, [hi, hiBase, n1], ox, oy);
+  drawShadedFace(ctx, BASE, [hi, hiBase, n2], ox, oy);
+  drawShadedFace(ctx, BASE, [hi, n1, lo], ox, oy);
+  drawShadedFace(ctx, BASE, [hi, n2, lo], ox, oy);
+  strokeFace(ctx, [hi, n1, lo], ox, oy);
+  strokeFace(ctx, [hi, n2, lo], ox, oy);
+  strokeFace(ctx, [hi, hiBase, n1], ox, oy);
+  strokeFace(ctx, [hi, hiBase, n2], ox, oy);
+}
+
+// Hoyo: piramide invertida. El apice (z=0) esta en el centro de la celda y las
+// 4 aristas altas estan en z=1 a lo largo de los 4 bordes (junto a los cubos).
+function drawPit(ctx, col, row, ox, oy) {
+  const BASE = '#d4a256';
+  const t00 = [col, row, 1], t10 = [col + 1, row, 1];
+  const t11 = [col + 1, row + 1, 1], t01 = [col, row + 1, 1];
+  const apex = [col + 0.5, row + 0.5, 0];
+  const faces = [
+    [t00, t10, apex], // N
+    [t00, t01, apex], // O
+    [t10, t11, apex], // E
+    [t01, t11, apex], // S
+  ];
+  for (const f of faces) drawShadedFace(ctx, BASE, f, ox, oy);
+  for (const f of faces) strokeFace(ctx, f, ox, oy);
+}
+
+// Dibuja un prisma rectangular en la celda iso. Toma rect en coords de celda
+// (cx0, cy0, cx1, cy1, donde 0 = origen NW y 1 = SE) y la altura h en [0,1].
+// Acepta un baseColor (legacy: tambien tres colores para compatibilidad).
+function drawPrism(ctx, col, row, cx0, cy0, cx1, cy1, h, ox, oy, baseColor) {
+  const tNW = [col + cx0, row + cy0, h], tNE = [col + cx1, row + cy0, h];
+  const tSE = [col + cx1, row + cy1, h], tSW = [col + cx0, row + cy1, h];
+  const bNE = [col + cx1, row + cy0, 0], bSE = [col + cx1, row + cy1, 0];
+  const bSW = [col + cx0, row + cy1, 0];
+  const wasInScene = __scene !== null;
+  if (!wasInScene) beginScene(ctx, ox, oy);
+  drawShadedFace(ctx, baseColor, [tNE, tSE, bSE, bNE], ox, oy, [1, 0, 0]);
+  drawShadedFace(ctx, baseColor, [tSW, tSE, bSE, bSW], ox, oy, [0, 1, 0]);
+  drawShadedFace(ctx, baseColor, [tNW, tNE, tSE, tSW], ox, oy, [0, 0, 1]);
+  if (!wasInScene) flushScene();
+}
+
+// Cubo en celda vacia. Los kinds nuevos se distinguen del cubo del grid (azul)
+// usando paleta amarilla.
+function drawCubeKind(ctx, col, row, ox, oy) {
+  drawPrism(ctx, col, row, 0, 0, 1, 1, 1, ox, oy, '#e0bf52');
+}
+
+// Cubo "incognita": gris con un signo de interrogacion en la cara superior,
+// para marcar celdas que no sabemos como resolver.
+function drawUnknown(ctx, col, row, ox, oy) {
+  drawPrism(ctx, col, row, 0, 0, 1, 1, 1, ox, oy, '#888');
+  // Signo de interrogacion centrado en la cara superior; se pinta DESPUES
+  // del flush para no quedar tapado por las caras del prisma.
+  const center = isoProject(col + 0.5, row + 0.5, 1, ox, oy);
+  addOverlay(c => {
+    c.fillStyle = '#eee';
+    c.font = 'bold ' + Math.floor(ISO_TILE * 0.9) + 'px sans-serif';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText('?', center[0], center[1]);
+  });
+}
+
+// === Helpers comunes para los kinds de techo ================================
+// Esquinas en coords del grid (col, row, z), no proyectadas. Para usar con
+// drawShadedFace / strokeFace.
+function cellCornersCRZ(col, row) {
+  return {
+    b00: [col,     row,     0],
+    b10: [col + 1, row,     0],
+    b11: [col + 1, row + 1, 0],
+    b01: [col,     row + 1, 0],
+    t00: [col,     row,     1],
+    t10: [col + 1, row,     1],
+    t11: [col + 1, row + 1, 1],
+    t01: [col,     row + 1, 1],
+    cb:  [col + 0.5, row + 0.5, 0],
+    ct:  [col + 0.5, row + 0.5, 1],
+  };
+}
+
+// Esquina concava: dos aristas adyacentes a la esquina alta (z=1) y la esquina
+// opuesta cae a z=0. La superficie es un plano que pasa por (esq alta z=1) y la
+// (esq diagonal opuesta z=0), con las dos esquinas adyacentes a media altura.
+// Para simplificar, dibujamos dos triangulos inclinados que comparten una arista
+// que va de la esquina alta (z=1) a la diagonal opuesta (z=0).
+function drawCornerIn(ctx, col, row, dir, ox, oy) {
+  const BASE = '#d4a256';
+  const c = cellCornersCRZ(col, row);
+  let hi, lo, adjN, adjF;
+  if (dir === 0)      { hi = c.t10; lo = c.b01; adjN = c.t11; adjF = c.t00; }
+  else if (dir === 1) { hi = c.t11; lo = c.b00; adjN = c.t01; adjF = c.t10; }
+  else if (dir === 2) { hi = c.t01; lo = c.b10; adjN = c.t00; adjF = c.t11; }
+  else                { hi = c.t00; lo = c.b11; adjN = c.t10; adjF = c.t01; }
+  drawShadedFace(ctx, BASE, [hi, adjF, lo], ox, oy);
+  drawShadedFace(ctx, BASE, [hi, adjN, lo], ox, oy);
+  strokeFace(ctx, [hi, adjF, lo], ox, oy);
+  strokeFace(ctx, [hi, adjN, lo], ox, oy);
+}
+
+function drawCornerOut(ctx, col, row, dir, ox, oy) {
+  const BASE = '#d4a256';
+  const c = cellCornersCRZ(col, row);
+  let hi, b1, b2, bOpp;
+  if (dir === 0)      { hi = c.t10; b1 = c.b00; b2 = c.b11; bOpp = c.b01; }
+  else if (dir === 1) { hi = c.t11; b1 = c.b10; b2 = c.b01; bOpp = c.b00; }
+  else if (dir === 2) { hi = c.t01; b1 = c.b11; b2 = c.b00; bOpp = c.b10; }
+  else                { hi = c.t00; b1 = c.b01; b2 = c.b10; bOpp = c.b11; }
+  drawShadedFace(ctx, BASE, [hi, b1, bOpp], ox, oy);
+  drawShadedFace(ctx, BASE, [hi, b2, bOpp], ox, oy);
+  drawShadedFace(ctx, BASE, [hi, b1, b2], ox, oy);
+  strokeFace(ctx, [hi, b1, bOpp], ox, oy);
+  strokeFace(ctx, [hi, b2, bOpp], ox, oy);
+  strokeFace(ctx, [hi, b1, b2], ox, oy);
+}
+
+function drawPyramid(ctx, col, row, ox, oy) {
+  const BASE = '#d4a256';
+  const c = cellCornersCRZ(col, row);
+  const faces = [
+    [c.ct, c.b00, c.b10],
+    [c.ct, c.b00, c.b01],
+    [c.ct, c.b10, c.b11],
+    [c.ct, c.b01, c.b11],
+  ];
+  for (const f of faces) drawShadedFace(ctx, BASE, f, ox, oy);
+  for (const f of faces) strokeFace(ctx, f, ox, oy);
+}
+
+function drawIso() {
+  const canvas = document.getElementById('isoCanvas');
+  const w = 6 * ISO_TILE + 8;
+  const h = 3 * ISO_TILE + ISO_H + 16;
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, w, h);
+
+  const ox = w / 2;
+  const oy = ISO_H + 8;
+  const grid = currentCase.grid;
+
+  // Suelo tenue en celdas vacias: lo pintamos directamente al ctx, ANTES de
+  // acumular la escena. No participa en el orden global porque queda
+  // siempre en el fondo y nunca lo tapa nada que no este encima de el.
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      if (grid[r][c]) continue;
+      const p0 = isoProject(c,     r,     0, ox, oy);
+      const p1 = isoProject(c + 1, r,     0, ox, oy);
+      const p2 = isoProject(c + 1, r + 1, 0, ox, oy);
+      const p3 = isoProject(c,     r + 1, 0, ox, oy);
+      ctx.fillStyle = '#1a1a1a';
+      fillPoly(ctx, [p0, p1, p2, p3]);
+      ctx.strokeStyle = '#262626';
+      strokePoly(ctx, [p0, p1, p2, p3]);
+    }
+  }
+
+  // Estrategia de pintado:
+  //  1. Pintamos los CUBOS del grid en orden estricto r=0..2, c=0..2 (atras
+  //     -> adelante). Como los cubos son volumenes rectangulares y los pintamos
+  //     en modo directo (sin pasar por scene), los de delante tapan a los de
+  //     atras de forma natural. Esto evita las lineas espurias de las tapas.
+  //  2. Para las DECORACIONES (rampas, kinds con caras inclinadas) acumulamos
+  //     en scene buffer y aplicamos painter global. Las decoraciones quedan
+  //     SIEMPRE por encima de los cubos donde se solapen.
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      if (grid[r][c]) drawCube(ctx, c, r, ox, oy);
+    }
+  }
+
+  beginScene(ctx, ox, oy);
+  const decByCell = new Map();
+  for (const d of decorations) {
+    const k = d.row * 3 + d.col;
+    if (!decByCell.has(k)) decByCell.set(k, []);
+    decByCell.get(k).push(d);
+  }
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      if (grid[r][c]) continue;
+      for (const d of (decByCell.get(r * 3 + c) || [])) {
+        if (d.kind === 'ramp') drawRampOrtho(ctx, c, r, d.dir, ox, oy);
+        else if (d.kind === 'ramp_u') drawRampU(ctx, c, r, d.dir, ox, oy);
+        else if (d.kind === 'ramp_diag') drawRampDiag(ctx, c, r, d.dir, ox, oy);
+        else if (d.kind === 'pit') drawPit(ctx, c, r, ox, oy);
+        else if (d.kind === 'corner_in') drawCornerIn(ctx, c, r, d.dir, ox, oy);
+        else if (d.kind === 'corner_out') drawCornerOut(ctx, c, r, d.dir, ox, oy);
+        else if (d.kind === 'pyramid') drawPyramid(ctx, c, r, ox, oy);
+        else if (d.kind === 'cube') drawCubeKind(ctx, c, r, ox, oy);
+        else if (d.kind === 'unknown') drawUnknown(ctx, c, r, ox, oy);
+      }
+    }
+  }
+  flushScene();
+}
+
+// === UI =====================================================================
+function renderAll() {
+  drawTop();
+  drawIso();
+  renderPicker();
+}
+
+function renderPicker() {
+  const picker = document.getElementById('picker');
+  picker.innerHTML = '';
+  if (!selectedCell) {
+    picker.innerHTML = '<div class="hint">Selecciona una celda vacia para colocar una decoracion.</div>';
+    return;
+  }
+  const { row, col } = selectedCell;
+  if (currentCase.grid[row][col]) {
+    picker.innerHTML = '<div class="hint">Esa celda tiene un cubo, no es decorable.</div>';
+    return;
+  }
+  const current = decorations.find(d => d.row === row && d.col === col) || null;
+
+  const header = document.createElement('div');
+  header.className = 'hint';
+  header.textContent = `Celda (${row}, ${col})`;
+  picker.appendChild(header);
+
+  for (const k of KINDS) {
+    const row1 = document.createElement('div');
+    row1.className = 'row';
+    const lbl = document.createElement('label');
+    lbl.textContent = k.label + ':';
+    row1.appendChild(lbl);
+    for (let dir = 0; dir < k.dirs; dir++) {
+      const btn = document.createElement('button');
+      btn.className = 'dec';
+      btn.appendChild(iconFor(k.kind, dir));
+      btn.title = k.label + ' ' + k.dirLabels[dir];
+      if (isRecommended(currentCase.grid, row, col, k.kind, dir)) {
+        btn.classList.add('recommended');
+        btn.title += ' (recomendado)';
+      }
+      if (current && current.kind === k.kind && current.dir === dir) btn.classList.add('active');
+      btn.addEventListener('click', () => setDecoration(row, col, k.kind, dir));
+      row1.appendChild(btn);
+    }
+    picker.appendChild(row1);
+  }
+
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'clear';
+  clearBtn.textContent = 'Quitar decoracion';
+  clearBtn.addEventListener('click', () => clearDecoration(row, col));
+  picker.appendChild(clearBtn);
+}
+
+function setDecoration(row, col, kind, dir) {
+  decorations = decorations.filter(d => !(d.row === row && d.col === col));
+  decorations.push({ row, col, kind, dir });
+  renderAll();
+}
+
+function clearDecoration(row, col) {
+  decorations = decorations.filter(d => !(d.row === row && d.col === col));
+  renderAll();
+}
+
+function setStatus(text, kind) {
+  const el = document.getElementById('status');
+  el.textContent = text || '';
+  el.className = 'meta' + (kind ? ' ' + kind : '');
+}
+
+// Clic en la vista cenital -> seleccionar celda.
+function attachTopClick() {
+  const canvas = document.getElementById('topCanvas');
+  canvas.addEventListener('click', e => {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    const col = Math.floor((x - 1) / CELL);
+    const row = Math.floor((y - 1) / CELL);
+    if (row < 0 || row > 2 || col < 0 || col > 2) return;
+    selectedCell = { row, col };
+    renderAll();
+  });
+}
+
+function rotateCurrentCase() {
+  if (!currentCase) return;
+  // Rotamos cubos 90 horarios.
+  const grid = currentCase.grid;
+  const newGrid = [[false,false,false],[false,false,false],[false,false,false]];
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      newGrid[c][2 - r] = grid[r][c];
+    }
+  }
+  // Rotamos cubes en bits para mantenerlo coherente con el id (que no cambia
+  // bajo rotacion, asi que mantenerlo es opcional, pero asi POST sigue funcionando).
+  let newCubes = 0;
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      if (newGrid[r][c]) newCubes |= 1 << (r * 3 + c);
+    }
+  }
+  currentCase.grid = newGrid;
+  currentCase.cubes = newCubes;
+
+  // Rotamos las decoraciones.
+  decorations = decorations.map(d => {
+    const nr = d.col;
+    const nc = 2 - d.row;
+    let nd = d.dir;
+    if (d.kind === 'ramp' || d.kind === 'ramp_diag' ||
+        d.kind === 'corner_in' || d.kind === 'corner_out' ||
+        d.kind === 'wedge' || d.kind === 'ramp_u_closed') {
+      nd = (d.dir + 1) & 3;
+    } else if (d.kind === 'ramp_u' || d.kind === 'bridge_diag') {
+      nd = (d.dir + 1) % 2;
+    }
+    return { row: nr, col: nc, kind: d.kind, dir: nd };
+  });
+
+  // La celda seleccionada tambien rota.
+  if (selectedCell) {
+    const nr = selectedCell.col;
+    const nc = 2 - selectedCell.row;
+    selectedCell = { row: nr, col: nc };
+  }
+  renderAll();
+}
+
+async function refreshStats() {
+  try {
+    const res = await fetch('/api/stats');
+    if (!res.ok) return;
+    const s = await res.json();
+    document.getElementById('statTotal').textContent = s.total;
+    document.getElementById('statGood').textContent = s.good;
+    document.getElementById('statAlmost').textContent = s.almost;
+    document.getElementById('statUnknown').textContent = s.withUnknown;
+  } catch {}
+}
+
+async function loadCase(prevId, prevLabel, endpoint) {
+  if (!prevId) setStatus('Cargando caso…');
+  const res = await fetch(endpoint || '/api/case');
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    setStatus(body.error || 'Error pidiendo caso', 'err');
+    return;
+  }
+  currentCase = await res.json();
+  decorations = (currentCase.savedSolution && currentCase.savedSolution.decorations) || [];
+  selectedCell = null;
+  document.getElementById('caseCode').textContent = 'L' + currentCase.id.toUpperCase();
+  let note = '';
+  if (currentCase.savedSolution) {
+    const q = currentCase.savedSolution.quality;
+    if (q === 'good' || q === 'almost') note = ` — saved quality=${q}`;
+    else note = ' — con solucion previa';
+  }
+  const prefix = prevId ? `saved ${prevId} (${prevLabel}). ` : '';
+  setStatus(`${prefix}case ${currentCase.id}${note}`,
+            prevLabel === 'good' ? 'ok' : prevLabel === 'almost' ? 'almost' : null);
+  renderAll();
+  refreshStats();
+}
+
+async function saveSolution(quality) {
+  setStatus('Guardando…');
+  const res = await fetch('/api/solution', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: currentCase.id, cubes: currentCase.cubes, decorations, quality }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.ok) {
+    const savedId = currentCase.id;
+    setStatus(`saved quality=${quality}: ${savedId} — loading next…`,
+              quality === 'good' ? 'ok' : 'almost');
+    // Tras guardar, cargar otro caso automaticamente.
+    await loadCase(savedId, quality);
+  } else {
+    setStatus('Error: ' + (body.error || res.status), 'err');
+  }
+}
+
+function renderThumbnail(canvas, kind, dir) {
+  // Dibuja un kind aislado en proyeccion iso, en una celda. Reusa las funciones
+  // de render iso pasandoles col=0, row=0.
+  const W = 90, H = 90;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, W, H);
+  const ox = W / 2;
+  const oy = ISO_H / 2 + 18;
+  // Suelo tenue.
+  const p0 = isoProject(0, 0, 0, ox, oy);
+  const p1 = isoProject(1, 0, 0, ox, oy);
+  const p2 = isoProject(1, 1, 0, ox, oy);
+  const p3 = isoProject(0, 1, 0, ox, oy);
+  ctx.fillStyle = '#1a1a1a';
+  fillPoly(ctx, [p0, p1, p2, p3]);
+  ctx.strokeStyle = '#262626';
+  strokePoly(ctx, [p0, p1, p2, p3]);
+  // Dispatch al renderizador correspondiente, usando painter global.
+  beginScene(ctx, ox, oy);
+  if (kind === 'ramp') drawRampOrtho(ctx, 0, 0, dir, ox, oy);
+  else if (kind === 'ramp_u') drawRampU(ctx, 0, 0, dir, ox, oy);
+  else if (kind === 'ramp_diag') drawRampDiag(ctx, 0, 0, dir, ox, oy);
+  else if (kind === 'pit') drawPit(ctx, 0, 0, ox, oy);
+  else if (kind === 'corner_in') drawCornerIn(ctx, 0, 0, dir, ox, oy);
+  else if (kind === 'corner_out') drawCornerOut(ctx, 0, 0, dir, ox, oy);
+  else if (kind === 'pyramid') drawPyramid(ctx, 0, 0, ox, oy);
+  else if (kind === 'cube') drawCubeKind(ctx, 0, 0, ox, oy);
+  else if (kind === 'unknown') drawUnknown(ctx, 0, 0, ox, oy);
+  flushScene();
+}
+
+let __galleryStatus = {};
+
+async function loadGalleryStatus() {
+  try {
+    const res = await fetch('/api/gallery-status');
+    if (res.ok) __galleryStatus = await res.json();
+  } catch {}
+}
+
+async function saveGalleryStatus(key, ok) {
+  __galleryStatus[key] = ok;
+  try {
+    await fetch('/api/gallery-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, ok }),
+    });
+  } catch {}
+}
+
+function buildGallery() {
+  const root = document.getElementById('gallery');
+  root.innerHTML = '';
+  for (const k of KINDS) {
+    const item = document.createElement('div');
+    item.className = 'galleryItem';
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = k.label;
+    item.appendChild(name);
+    const thumbs = document.createElement('div');
+    thumbs.className = 'thumbs';
+    for (let dir = 0; dir < k.dirs; dir++) {
+      const wrap = document.createElement('div');
+      wrap.className = 'thumb';
+      const canvas = document.createElement('canvas');
+      const iconWrap = document.createElement('div');
+      iconWrap.className = 'thumb-icon';
+      iconWrap.appendChild(iconFor(k.kind, dir));
+      const lbl = document.createElement('div');
+      lbl.textContent = k.dirLabels[dir];
+      wrap.appendChild(canvas);
+      wrap.appendChild(iconWrap);
+      wrap.appendChild(lbl);
+      thumbs.appendChild(wrap);
+      renderThumbnail(canvas, k.kind, dir);
+    }
+    item.appendChild(thumbs);
+
+    // Un solo checkbox por kind, debajo de los thumbs, con linea separadora.
+    // Marca que el render iso de este kind (en todas sus direcciones) es correcto.
+    const sep = document.createElement('div');
+    sep.className = 'kind-sep';
+    item.appendChild(sep);
+    const okWrap = document.createElement('label');
+    okWrap.className = 'kind-ok';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    const key = k.kind + '/0';
+    cb.checked = !!__galleryStatus[key];
+    if (cb.checked) item.classList.add('ok');
+    cb.addEventListener('change', async () => {
+      item.classList.toggle('ok', cb.checked);
+      await saveGalleryStatus(key, cb.checked);
+    });
+    okWrap.appendChild(cb);
+    okWrap.appendChild(document.createTextNode(' renderiza bien'));
+    item.appendChild(okWrap);
+
+    root.appendChild(item);
+  }
+}
+
+function main() {
+  attachTopClick();
+  document.getElementById('newCase').addEventListener('click', () => loadCase());
+  document.getElementById('unevaluated').addEventListener('click',
+    () => loadCase(null, null, '/api/case/unevaluated'));
+  // Carga un caso GUARDADO que aun tiene decoraciones 'unknown' (?), para
+  // poder mejorarlo. Si no quedan, el server responde 404.
+  document.getElementById('newCaseQ').addEventListener('click',
+    () => loadCase(null, null, '/api/case/with-unknown'));
+  // Buscador: carga el caso por id (formato hex de 1 a 3 digitos, con o sin L).
+  // Si el id no es canonico, el server lo canonicaliza; mostramos el id final
+  // en el status para que el usuario lo sepa.
+  const searchInput = document.getElementById('searchId');
+  const goSearch = () => {
+    const raw = searchInput.value.trim();
+    if (!raw) return;
+    loadCase(null, null, '/api/case/by-id?id=' + encodeURIComponent(raw));
+  };
+  document.getElementById('searchBtn').addEventListener('click', goSearch);
+  searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') goSearch(); });
+  document.getElementById('rotate').addEventListener('click', rotateCurrentCase);
+  document.getElementById('saveGood').addEventListener('click', () => saveSolution('good'));
+  document.getElementById('saveAlmost').addEventListener('click', () => saveSolution('almost'));
+  document.getElementById('clear').addEventListener('click', () => {
+    decorations = [];
+    renderAll();
+  });
+  buildGallery();
+  loadCase();
+}
+
+// ============================================================================
+// === WebGL (Three.js) iso renderer ==========================================
+// Cada kind es un volumen solido (mesh cerrado). Three.js + z-buffer eliminan
+// superficies ocultas correctamente. Las aristas se anaden como LineSegments
+// solo en los bordes "hard" (entre caras con angulo grande) usando EdgesGeometry.
+// ============================================================================
+
+const KIND_COLOR_RAMP = 0xd4a256;
+const KIND_COLOR_CUBE_GRID = 0x5aa8d0;
+const KIND_COLOR_CUBE_AMARILLO = 0xe0bf52;
+const KIND_COLOR_UNKNOWN = 0x888888;
+
+// Construye una BufferGeometry indexada a partir de una lista de caras (cada
+// cara es un array de vertices CCW visto desde fuera, con 3 o 4 vertices).
+//
+// Detalles importantes para que EdgesGeometry detecte aristas coplanares:
+//  - Los DOS triangulos de un quad COMPARTEN los mismos indices de vertice
+//    (la malla es indexada). Sin esto, EdgesGeometry no sabe que son dos
+//    triangulos vecinos y dibuja la diagonal interna del quad.
+//  - Las normales se asignan explicitamente por cara (todos los vertices de
+//    una cara reciben la misma normal). Asi flatShading se ve correcto y
+//    EdgesGeometry compara normales con precision sin redondeos.
+//  - Vertices duplicados entre caras distintas: necesario para que cada cara
+//    pueda tener su propia normal. EdgesGeometry sigue funcionando porque
+//    detecta aristas comparando posiciones (no indices entre caras).
+function geometryFromFaces(faces) {
+  const positions = [];
+  const normals = [];
+  const indices = [];
+  let next = 0;
+  for (const face of faces) {
+    // Calculamos la normal de la cara (CCW dado outward).
+    const a = face[0], b = face[1], c = face[2];
+    const ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+    const vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+    let nx = uy*vz - uz*vy;
+    let ny = uz*vx - ux*vz;
+    let nz = ux*vy - uy*vx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nx /= len; ny /= len; nz /= len;
+    // Anadimos cada vertice de la cara una sola vez.
+    const baseIdx = next;
+    for (const v of face) {
+      positions.push(v[0], v[1], v[2]);
+      normals.push(nx, ny, nz);
+      next++;
+    }
+    // Triangulamos como fan: 0-1-2, 0-2-3, 0-3-4, ... Compartiendo indices
+    // entre los triangulos del mismo quad (no duplicamos vertices).
+    for (let i = 1; i < face.length - 1; i++) {
+      indices.push(baseIdx, baseIdx + i, baseIdx + i + 1);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  g.setIndex(indices);
+  return g;
+}
+
+// Construye un mesh + sus aristas duras y los agrupa en un Group, listo para
+// posicionar en la escena.
+function meshFromFaces(faces, color, edgeThresholdDeg) {
+  const geom = geometryFromFaces(faces);
+  const mat = new THREE.MeshLambertMaterial({ color, flatShading: true });
+  const mesh = new THREE.Mesh(geom, mat);
+  const edges = new THREE.EdgesGeometry(geom, edgeThresholdDeg || 30);
+  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
+  const group = new THREE.Group();
+  group.add(mesh);
+  group.add(line);
+  return group;
+}
+
+// Coordenadas locales por kind: cada celda ocupa una caja unitaria [0..1]^3
+// en (x, y, z) donde +x = este, +y = sur (row), +z = arriba. La posicion
+// global se aplica desplazando el Group por (col, row, 0).
+
+// --- Cubo (kind=cube y cubo del grid): caja solida [0..1]^3 ----------------
+function geomCube(color) {
+  // Caras CCW vistas desde fuera. Cada cara es un quad.
+  const f = [
+    // Techo (z=1)
+    [[0,0,1],[1,0,1],[1,1,1],[0,1,1]],
+    // Base (z=0)
+    [[0,1,0],[1,1,0],[1,0,0],[0,0,0]],
+    // Norte (y=0)
+    [[0,0,0],[1,0,0],[1,0,1],[0,0,1]],
+    // Sur (y=1)
+    [[1,1,0],[0,1,0],[0,1,1],[1,1,1]],
+    // Este (x=1)
+    [[1,0,0],[1,1,0],[1,1,1],[1,0,1]],
+    // Oeste (x=0)
+    [[0,1,0],[0,0,0],[0,0,1],[0,1,1]],
+  ];
+  return meshFromFaces(f, color, 30);
+}
+
+// --- Rampa ortogonal dir 0..3 (N/E/S/O alto) -------------------------------
+// El lado alto esta a z=1 (linea pegada al cubo en esa direccion); el opuesto
+// a z=0. Cuna solida.
+function geomRampOrtho(color, dir) {
+  // Definimos para dir=0 (N alto, z=1 en y=0; z=0 en y=1). Luego rotamos.
+  // Vertices base de la cuna (dir=0).
+  // Esquinas: nw_hi=(0,0,1), ne_hi=(1,0,1), nw_lo=(0,0,0), ne_lo=(1,0,0),
+  // sw=(0,1,0), se=(1,1,0).
+  // Caras solidas:
+  //   - rampa (inclinada): nw_hi, ne_hi, se, sw
+  //   - cara norte vertical: nw_hi, nw_lo, ne_lo, ne_hi (cerrando el frente al cubo)
+  //   - base (z=0): nw_lo, sw, se, ne_lo
+  //   - lateral oeste triangular: nw_hi, sw, nw_lo
+  //   - lateral este triangular: ne_hi, ne_lo, se
+  const faces = [
+    [[0,0,1],[1,0,1],[1,1,0],[0,1,0]], // rampa inclinada
+    [[0,0,1],[0,0,0],[1,0,0],[1,0,1]], // norte vertical
+    [[0,0,0],[0,1,0],[1,1,0],[1,0,0]], // base
+    [[0,0,1],[0,1,0],[0,0,0]],          // oeste triangular
+    [[1,0,1],[1,0,0],[1,1,0]],          // este triangular
+  ];
+  const group = meshFromFaces(faces, color, 20);
+  // Rotacion en Z (eje vertical): dir 0 -> 0, dir 1 -> +90 (E alto),
+  // dir 2 -> +180, dir 3 -> +270. Pero queremos rotar alrededor del centro
+  // de la celda (0.5, 0.5, 0) no del origen.
+  rotateGroupAroundCellCenter(group, dir * Math.PI / 2);
+  return group;
+}
+
+// Rota el contenido de un Group alrededor del centro de la celda (0.5, 0.5, 0)
+// en el eje Z, conservando que el Group exterior siga ubicable libremente con
+// position.set(col, row, 0) en el sistema mundial.
+function rotateGroupAroundCellCenter(group, angleZ) {
+  // Mueve los hijos a un grupo intermedio, los descentra al origen, rota, y
+  // los re-centra. Asi el group queda con sus contenidos rotados in-place.
+  const pivot = new THREE.Group();
+  while (group.children.length) pivot.add(group.children[0]);
+  pivot.position.set(0.5, 0.5, 0);
+  pivot.rotation.z = angleZ;
+  // Necesitamos compensar el offset del pivot al posicionarlo en (0.5,0.5,0).
+  // El truco: dentro del pivot, los hijos siguen estando en sus coords [0..1].
+  // Para que rote alrededor de (0.5,0.5,0) en coords del group, desplazamos
+  // los hijos al origen antes de rotar.
+  const inner = new THREE.Group();
+  while (pivot.children.length) inner.add(pivot.children[0]);
+  inner.position.set(-0.5, -0.5, 0);
+  pivot.add(inner);
+  group.add(pivot);
+}
+
+// --- Rampa U: cresta alta a 2 lados, valle z=0 en linea media --------------
+function geomRampU(color, dir) {
+  // dir 0 = NS (cresta alta en y=0 y en y=1, valle en y=0.5).
+  // Vertices:
+  //   top_n_l=(0,0,1), top_n_r=(1,0,1), top_s_l=(0,1,1), top_s_r=(1,1,1)
+  //   mid_l=(0,0.5,0), mid_r=(1,0.5,0)
+  //   base: 4 esquinas en z=0
+  const tn_l=[0,0,1], tn_r=[1,0,1], ts_l=[0,1,1], ts_r=[1,1,1];
+  const ml=[0,0.5,0], mr=[1,0.5,0];
+  const bn_l=[0,0,0], bn_r=[1,0,0], bs_l=[0,1,0], bs_r=[1,1,0];
+  const faces = [
+    // Mitad norte: rampa inclinada
+    [tn_l, tn_r, mr, ml],
+    // Mitad sur:
+    [ts_r, ts_l, ml, mr],
+    // Cara norte vertical (entre tn y bn)
+    [tn_l, bn_l, bn_r, tn_r],
+    // Cara sur vertical
+    [ts_r, bs_r, bs_l, ts_l],
+    // Lateral oeste triangulos
+    [tn_l, ml, bn_l],
+    [ml, bs_l, bn_l],
+    [ml, ts_l, bs_l],
+    // Lateral este triangulos
+    [tn_r, bn_r, mr],
+    [mr, bn_r, bs_r],
+    [mr, bs_r, ts_r],
+    // Base
+    [bn_l, bs_l, bs_r, bn_r],
+  ];
+  const group = meshFromFaces(faces, color, 20);
+  rotateGroupAroundCellCenter(group, dir === 0 ? 0 : Math.PI / 2);
+  return group;
+}
+
+// --- Rampa diagonal: una esquina alta, las otras 3 en z=0 -------------------
+// --- Rampa diagonal: cresta alta a lo largo de UNA arista, baja en el lado
+//     opuesto. Es decir, la rampa NE inclinada en diagonal: arista NE (la
+//     esquina) alta, arista SO baja. Tres puntos del techo en z=1 (los dos
+//     adyacentes a la esquina alta + la esquina alta misma) y la esquina
+//     diagonal opuesta del techo cae a z=0.
+function geomRampDiag(color, dir) {
+  // dir 0 = NE alto. Esquinas del techo:
+  //   ne_top = (1,0,1), no_top = (0,0,1), se_top = (1,1,1), so_top -> baja a z=0.
+  // El "techo" es un cuadrilatero alabeado: 3 esquinas a z=1 y 1 a z=0.
+  const nw=[0,0,1], ne=[1,0,1], se=[1,1,1];   // altas
+  const so_base=[0,1,0];                       // esquina diagonal cae
+  // Esquinas del suelo (todas a z=0).
+  const c00=[0,0,0], c10=[1,0,0], c11=[1,1,0], c01=[0,1,0];
+  const faces = [
+    // Techo alabeado triangulado: nw-ne-se y nw-se-so_base.
+    [nw, ne, se],
+    [nw, se, so_base],
+    // Pared norte vertical (entre nw,ne arriba y c00,c10 abajo).
+    [nw, c00, c10, ne],
+    // Pared este vertical (entre ne,se arriba y c10,c11 abajo).
+    [ne, c10, c11, se],
+    // Triangulo sur: la mitad sur cae diagonal hacia so. La pared del lado
+    // sur va de se (z=1) a c11 (z=0) a c01 (z=0) - es una pared inclinada.
+    // Como so_base = c01, la cara sur es un triangulo se -> c11 -> c01.
+    [se, c11, c01],
+    // Triangulo oeste similar: nw -> c01 -> c00. Pared inclinada en oeste.
+    [nw, c01, c00],
+    // base
+    [c00, c01, c11, c10],
+  ];
+  const group = meshFromFaces(faces, color, 20);
+  rotateGroupAroundCellCenter(group, dir * Math.PI / 2);
+  return group;
+}
+
+// --- Pit: pirámide invertida, 4 esquinas a z=1, valle central z=0 ----------
+function geomPit(color) {
+  const t00=[0,0,1], t10=[1,0,1], t11=[1,1,1], t01=[0,1,1];
+  const ap=[0.5,0.5,0];
+  // Tapa: NO es plana, son los 4 triangulos inclinados hacia el centro.
+  // Como cada esquina top esta a z=1, esos 4 triangulos forman el "embudo".
+  // El volumen solido se cierra abajo con la cara base (no se ve) y arriba
+  // con un anillo de 4 caras verticales en los lados de la celda.
+  const c00=[0,0,0], c10=[1,0,0], c11=[1,1,0], c01=[0,1,0];
+  const faces = [
+    // 4 caras inclinadas del embudo. Orden CCW visto desde el interior del
+    // hoyo (mirando hacia el centro): el orden t00,t10,ap produce una normal
+    // hacia (+y,+z) para la cara norte = mira al interior. Si se invierte,
+    // las normales apuntan hacia fuera y la iluminacion sale al reves.
+    [t00, t10, ap], // norte
+    [t10, t11, ap], // este
+    [t11, t01, ap], // sur
+    [t01, t00, ap], // oeste
+    // 4 paredes verticales en los bordes de la celda. Orden CCW visto desde
+    // FUERA del cubo: la pared norte se mira desde y<0, asi que los vertices
+    // se recorren en orden contrario al anterior.
+    [t00, c00, c10, t10], // norte (mira a -y)
+    [t10, c10, c11, t11], // este  (mira a +x)
+    [t11, c11, c01, t01], // sur   (mira a +y)
+    [t01, c01, c00, t00], // oeste (mira a -x)
+    // base (mira a -z, no se ve normalmente).
+    [c00, c01, c11, c10],
+  ];
+  return meshFromFaces(faces, color, 20);
+}
+
+// --- Pyramid: 4 esquinas en z=0, pico en centro z=1 ------------------------
+function geomPyramid(color) {
+  const ap=[0.5,0.5,1];
+  const c00=[0,0,0], c10=[1,0,0], c11=[1,1,0], c01=[0,1,0];
+  const faces = [
+    [c00, c10, ap], // norte
+    [c10, c11, ap], // este
+    [c11, c01, ap], // sur
+    [c01, c00, ap], // oeste
+    [c00, c01, c11, c10], // base
+  ];
+  return meshFromFaces(faces, color, 20);
+}
+
+// --- Corner_in (concava): tres esquinas adyacentes a z=1 forman una TAPA
+//     TRIANGULAR plana horizontal (NW, NE, SE en dir=0). La esquina diagonal
+//     opuesta (SO) cae a z=0 y la conexion entre la hipotenusa del triangulo
+//     y la esquina baja es un plano inclinado triangular.
+function geomCornerIn(color, dir) {
+  // dir 0 = NE como esquina interior de la concavidad. NW, NE, SE altos
+  // forman el triangulo plano. SO baja a z=0.
+  const nw_hi = [0, 0, 1];
+  const ne_hi = [1, 0, 1];
+  const se_hi = [1, 1, 1];
+  const so_lo = [0, 1, 0];
+  const c00=[0,0,0], c10=[1,0,0], c11=[1,1,0], c01=[0,1,0];
+  const faces = [
+    // Tapa triangular plana (z=1).
+    [nw_hi, ne_hi, se_hi],
+    // Plano inclinado: hipotenusa nw_hi - se_hi cae a so_lo.
+    [nw_hi, se_hi, so_lo],
+    // Pared norte vertical (nw_hi, ne_hi arriba; c00, c10 abajo).
+    [nw_hi, c00, c10, ne_hi],
+    // Pared este vertical (ne_hi, se_hi arriba; c10, c11 abajo).
+    [ne_hi, c10, c11, se_hi],
+    // Pared sur inclinada (se_hi arriba, c11 abajo, so_lo = c01 abajo).
+    [se_hi, c11, c01],
+    // Pared oeste inclinada (nw_hi arriba, c00 abajo, so_lo = c01 abajo).
+    [nw_hi, c01, c00],
+    // base
+    [c00, c01, c11, c10],
+  ];
+  const group = meshFromFaces(faces, color, 20);
+  rotateGroupAroundCellCenter(group, dir * Math.PI / 2);
+  return group;
+}
+
+// --- Corner_out (convexa): UN solo pico alto en una esquina, las otras 3
+//     esquinas del techo a z=0. Es una piramide-rampa con punta diagonal.
+function geomCornerOut(color, dir) {
+  // dir 0 = NE pico unico a z=1; el resto del techo cae a z=0.
+  const pico = [1, 0, 1];
+  const c00=[0,0,0], c10=[1,0,0], c11=[1,1,0], c01=[0,1,0];
+  const faces = [
+    // Cuatro caras inclinadas (pirámide oblicua) desde el pico hacia las 3
+    // esquinas inferiores y la propia esquina (c10) que esta debajo del pico.
+    [pico, c00, c10],   // norte
+    [pico, c10, c11],   // este
+    [pico, c11, c01],   // sur
+    [pico, c01, c00],   // oeste
+    [c00, c01, c11, c10],
+  ];
+  const group = meshFromFaces(faces, color, 20);
+  rotateGroupAroundCellCenter(group, dir * Math.PI / 2);
+  return group;
+}
+
+// --- Bridge diag: puente diagonal. La diagonal indicada (dir 0 = NO-SE,
+//     dir 1 = NE-SO) tiene una cresta horizontal a z=1, y los dos triangulos
+//     a los lados de la diagonal son planos inclinados que caen a z=0 en las
+//     dos esquinas opuestas a la diagonal. Pasa para conectar dos cubos
+//     diagonalmente opuestos por encima de los lados laterales abiertos.
+function geomBridgeDiag(color, dir) {
+  // dir 0 (NO-SE): cresta entre (0,0) y (1,1) a z=1. Esquinas bajas NE=(1,0)
+  // y SO=(0,1) a z=0.
+  const nw_hi = [0, 0, 1], se_hi = [1, 1, 1];
+  const ne_lo = [1, 0, 0], sw_lo = [0, 1, 0];
+  const c00=[0,0,0], c10=[1,0,0], c11=[1,1,0], c01=[0,1,0];
+  const faces = [
+    // Dos planos inclinados (techos) que parten de la cresta a las esquinas bajas.
+    [nw_hi, ne_lo, se_hi],   // techo norte/este
+    [nw_hi, se_hi, sw_lo],   // techo sur/oeste
+    // Paredes laterales para cerrar el volumen.
+    // Pared norte vertical: nw_hi alto, ne_lo bajo, c10 base, c00 base.
+    [nw_hi, c00, c10, ne_lo],
+    // Pared este: ne_lo, se_hi arriba; c10, c11 abajo.
+    [ne_lo, c10, c11, se_hi],
+    // Pared sur: se_hi, sw_lo arriba; c11, c01 abajo.
+    [se_hi, c11, c01, sw_lo],
+    // Pared oeste: sw_lo, nw_hi arriba; c01, c00 abajo.
+    [sw_lo, c01, c00, nw_hi],
+    // Base.
+    [c00, c01, c11, c10],
+  ];
+  const group = meshFromFaces(faces, color, 20);
+  // dir 1 = rotar 90 grados (cambia la diagonal de NO-SE a NE-SO).
+  rotateGroupAroundCellCenter(group, (dir === 0 ? 0 : Math.PI / 2));
+  return group;
+}
+
+// --- Ramp U closed: rampa N alta con valle hundido en el centro y lado
+//     abierto al sur. La tapa NO es plana: tres planos inclinados confluyen
+//     en un punto bajo en el centro de la celda, dando continuidad con los
+//     cubos N, E y O (la arista contra cada cubo queda a z=1 ligado a la
+//     altura del cubo) y abriendo "hacia abajo" por el lado S.
+function geomRampUClosed(color, dir) {
+  // dir 0 = lado abierto S. Tres rampas inclinadas formando una U:
+  //   - Rampa N (todo el lado norte): arista N alta, baja al sur.
+  //   - Rampa E (lado este): arista E alta, baja al oeste.
+  //   - Rampa O (lado oeste): arista O alta, baja al este.
+  // Las tres confluyen en un "suelo" plano horizontal central a z=0 de
+  // tamano (1-2K) x (1-K), donde K es la longitud horizontal que ocupa la
+  // pendiente de cada rampa. Las aristas exteriores E y O estan ENTERAS a
+  // z=1 (no inclinadas) para dar continuidad lateral con los cubos vecinos.
+  //
+  // Esquinas perimetrales (todas a z=1 menos las del lado abierto S):
+  const t00=[0,0,1], t10=[1,0,1]; // NO, NE altos (esquinas top)
+  const t01=[0,1,1], t11=[1,1,1]; // SO, SE altos tambien para continuidad
+                                   // con cubos E y O (sus paredes contra
+                                   // estos lados estan a z=1).
+  // Esquinas inferiores del cubo virtual.
+  const c00=[0,0,0], c10=[1,0,0], c11=[1,1,0], c01=[0,1,0];
+  // Suelo plano interior (zona donde las 3 rampas terminan): un rectangulo
+  // a z=0 que llega hasta el lado sur (la apertura).
+  // K = distancia desde el borde a donde acaba la pendiente. Cuanto mas
+  // cerca de 0.5, mas inclinadas son las rampas y menor es el suelo plano
+  // central. Con K=0.48 el suelo plano es casi una linea estrecha que solo
+  // conecta visualmente al lado abierto S, sin formar un valle visible.
+  const K = 0.48;
+  const fNW=[K,K,0], fNE=[1-K,K,0];
+  const fSE=[1-K,1,0], fSW=[K,1,0]; // borde sur del suelo: llega hasta y=1 (apertura)
+  const faces = [
+    // --- Tres rampas inclinadas (techo de la U) ---
+    // Rampa N (baja de arista N alta a arista fNW-fNE del suelo interior).
+    [t00, t10, fNE, fNW],
+    // Rampa E (baja de arista E alta a arista fNE-fSE).
+    [t10, t11, fSE, fNE],
+    // Rampa O (baja de arista O alta a arista fNW-fSW).
+    [t01, t00, fNW, fSW],
+    // --- Suelo plano interior (visible desde arriba en el centro) ---
+    [fNW, fNE, fSE, fSW],
+    // --- Paredes exteriores verticales (continuidad con los cubos vecinos) ---
+    // Norte: t00-t10 arriba, c00-c10 abajo.
+    [t00, c00, c10, t10],
+    // Este: t10-t11 arriba, c10-c11 abajo.
+    [t10, c10, c11, t11],
+    // Oeste: t01-t00 arriba, c01-c00 abajo.
+    [t01, c01, c00, t00],
+    // Sur (LADO ABIERTO): no hay pared exterior; el suelo interior conecta
+    // visualmente con el exterior por el lado S.
+    // --- Base inferior (no se ve) ---
+    [c00, c01, c11, c10],
+  ];
+  const group = meshFromFaces(faces, color, 20);
+  rotateGroupAroundCellCenter(group, dir * Math.PI / 2);
+  return group;
+}
+
+// --- Wedge: cubo cortado por un plano vertical-diagonal. Para dir=0 (NE),
+//     la esquina NE se conserva y el cubo se corta diagonalmente desde NO a
+//     SE, dejando un prisma triangular con esa hipotenusa como cara cortada.
+function geomWedge(color, dir) {
+  // dir 0 = esquina NE conservada. Las tres esquinas presentes en el suelo y
+  // techo son NO, NE, SE. La hipotenusa NO-SE es una cara inclinada vertical.
+  const no_top=[0,0,1], ne_top=[1,0,1], se_top=[1,1,1];
+  const no_base=[0,0,0], ne_base=[1,0,0], se_base=[1,1,0];
+  const faces = [
+    // Tapa superior triangular (z=1).
+    [no_top, ne_top, se_top],
+    // Cara norte vertical (entre NO-NE arriba y abajo).
+    [no_top, no_base, ne_base, ne_top],
+    // Cara este vertical.
+    [ne_top, ne_base, se_base, se_top],
+    // Hipotenusa vertical (la cara "cortada" diagonal entre NO y SE).
+    [se_top, se_base, no_base, no_top],
+    // Base triangular (mira hacia abajo).
+    [no_base, se_base, ne_base],
+  ];
+  const group = meshFromFaces(faces, color, 20);
+  rotateGroupAroundCellCenter(group, dir * Math.PI / 2);
+  return group;
+}
+
+// --- Unknown: cubo gris con "?" en cara superior ---------------------------
+function geomUnknown() {
+  // Cubo gris; el "?" lo anadimos como sprite/canvas texture al final.
+  return geomCube(KIND_COLOR_UNKNOWN);
+}
+
+// Mapeo kind -> funcion constructora.
+function meshForKind(kind, dir) {
+  switch (kind) {
+    case 'cube':         return geomCube(KIND_COLOR_CUBE_AMARILLO);
+    case 'ramp':         return geomRampOrtho(KIND_COLOR_RAMP, dir);
+    case 'ramp_u':       return geomRampU(KIND_COLOR_RAMP, dir);
+    case 'ramp_diag':    return geomRampDiag(KIND_COLOR_RAMP, dir);
+    case 'pit':          return geomPit(KIND_COLOR_RAMP);
+    case 'corner_in':    return geomCornerIn(KIND_COLOR_RAMP, dir);
+    case 'corner_out':   return geomCornerOut(KIND_COLOR_RAMP, dir);
+    case 'pyramid':      return geomPyramid(KIND_COLOR_RAMP);
+    case 'wedge':        return geomWedge(KIND_COLOR_RAMP, dir);
+    case 'ramp_u_closed':return geomRampUClosed(KIND_COLOR_RAMP, dir);
+    case 'bridge_diag':  return geomBridgeDiag(KIND_COLOR_RAMP, dir);
+    case 'unknown':      return geomUnknown();
+    default: return null;
+  }
+}
+
+// Crea un renderer iso reutilizable. Devuelve { scene, camera, renderer, root, render() }.
+function makeIsoRenderer(canvas, opts) {
+  const w = canvas.width, h = canvas.height;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  renderer.setSize(w, h, false);
+  renderer.setClearColor(0x111111, 1);
+
+  const scene = new THREE.Scene();
+  // Camara ortografica con angulos isometricos.
+  const viewSize = opts && opts.viewSize ? opts.viewSize : 2.6;
+  const aspect = w / h;
+  const camera = new THREE.OrthographicCamera(
+    -viewSize * aspect, viewSize * aspect,
+    viewSize, -viewSize,
+    -50, 50
+  );
+  // Posicion estandar isometrica: 45 grados azimuth, ~35.264 deg elevation.
+  // Con +x=este (derecha en pantalla), +y=sur (abajo en pantalla), +z=arriba,
+  // la camara debe estar al noroeste-arriba: x=-, y=-, z=+. Pero como Three.js
+  // por defecto invierte el eje Y en la imagen, lo mas claro es poner la
+  // camara en (+x, -y, +z) - eso da +x=derecha, +y=hacia el espectador (sur).
+  // Para que +y (sur) salga ABAJO en pantalla, posicionamos la camara en
+  // (+x, +y, +z) y mirando al origen.
+  camera.position.set(10, 10, 10);
+  camera.up.set(0, 0, 1);
+  camera.lookAt(0, 0, 0);
+
+  // Luz principal desde la derecha-frente-arriba (para que +x sea claro).
+  const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+  sun.position.set(5, 2, 4);
+  scene.add(sun);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.35);
+  scene.add(ambient);
+
+  // Root al que se anaden los meshes; se vacia entre frames.
+  const root = new THREE.Group();
+  scene.add(root);
+
+  return {
+    scene, camera, renderer, root,
+    setContents(grid, decorations) {
+      // Limpiar root.
+      while (root.children.length) {
+        const child = root.children[0];
+        root.remove(child);
+        child.traverse && child.traverse(o => {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) o.material.dispose();
+        });
+      }
+      // Centramos el grid de 3x3 en el origen. Tambien centramos en Z (-0.5)
+      // porque los meshes ocupan z=[0..1] localmente, asi que su centro esta
+      // en z=0.5. Sin este offset, la pieza queda medio cubo por encima de la
+      // camara y al rotar se sale del viewport.
+      const offsetX = -1.5, offsetY = -1.5, offsetZ = -0.5;
+
+      if (grid) {
+        for (let r = 0; r < 3; r++) {
+          for (let c = 0; c < 3; c++) {
+            if (!grid[r][c]) continue;
+            const m = geomCube(KIND_COLOR_CUBE_GRID);
+            m.position.set(c + offsetX, r + offsetY, offsetZ);
+            root.add(m);
+          }
+        }
+      }
+      if (decorations) {
+        for (const d of decorations) {
+          if (grid && grid[d.row] && grid[d.row][d.col]) continue;
+          const m = meshForKind(d.kind, d.dir);
+          if (!m) continue;
+          m.position.set(d.col + offsetX, d.row + offsetY, offsetZ);
+          root.add(m);
+        }
+      }
+    },
+    render() { renderer.render(scene, camera); },
+  };
+}
+
+// ============================================================================
+// Sustitutos de drawIso y renderThumbnail usando WebGL
+// ============================================================================
+let __mainIso = null;
+let __mainYaw = 0; // rotacion sobre eje Z del root, controlada con drag.
+let __mainPitch = 0; // inclinacion vertical, controlada con drag arriba/abajo.
+function drawIsoWebGL() {
+  const canvas = document.getElementById('isoCanvas');
+  // Tamano: hacemos el iso un poco mas grande para que la rotacion luzca.
+  const w = 8 * ISO_TILE + 8;
+  const h = 4 * ISO_TILE + ISO_H + 16;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w; canvas.height = h;
+    __mainIso = null;
+  }
+  if (!__mainIso) {
+    __mainIso = makeIsoRenderer(canvas, { viewSize: 2.6 });
+    attachMainIsoControls(canvas);
+  }
+  __mainIso.setContents(currentCase ? currentCase.grid : null, decorations || []);
+  applyMainIsoRotation();
+  __mainIso.render();
+}
+
+function applyMainIsoRotation() {
+  if (!__mainIso) return;
+  __mainIso.root.rotation.z = __mainYaw;
+  __mainIso.root.rotation.x = __mainPitch; // rota un poco hacia el espectador
+  __mainIso.root.rotation.order = 'ZXY';
+}
+
+function attachMainIsoControls(canvas) {
+  let dragging = false;
+  let lastX = 0, lastY = 0;
+  canvas.style.cursor = 'grab';
+  canvas.addEventListener('mousedown', e => {
+    dragging = true;
+    lastX = e.clientX; lastY = e.clientY;
+    canvas.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  window.addEventListener('mouseup', () => {
+    dragging = false;
+    canvas.style.cursor = 'grab';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    __mainYaw += dx * 0.01;
+    __mainPitch -= dy * 0.005;
+    // Limitamos el pitch para no voltear la escena.
+    if (__mainPitch > 0.6) __mainPitch = 0.6;
+    if (__mainPitch < -0.6) __mainPitch = -0.6;
+    applyMainIsoRotation();
+    __mainIso.render();
+  });
+  // Doble click resetea la vista.
+  canvas.addEventListener('dblclick', () => {
+    __mainYaw = 0; __mainPitch = 0;
+    applyMainIsoRotation();
+    __mainIso.render();
+  });
+}
+
+// Sobrescribimos drawIso para que apunte al renderer WebGL.
+drawIso = drawIsoWebGL;
+
+// Para evitar el limite de WebGL contexts (cada navegador permite 8-16),
+// usamos UN SOLO renderer WebGL offscreen para todos los thumbnails y
+// copiamos su output a cada canvas 2D de la galeria con drawImage.
+let __thumbWebGL = null;
+let __galleryThumbs = []; // [{ canvas2d, kind, dir, angle, animate }]
+let __galleryAnim = null;
+
+function getThumbWebGL() {
+  if (__thumbWebGL) return __thumbWebGL;
+  const off = document.createElement('canvas');
+  off.width = 90; off.height = 90;
+  __thumbWebGL = makeIsoRenderer(off, { viewSize: 0.95 });
+  return __thumbWebGL;
+}
+
+function copyTo2D(srcCanvas, dst2dCanvas) {
+  const ctx = dst2dCanvas.getContext('2d');
+  ctx.clearRect(0, 0, dst2dCanvas.width, dst2dCanvas.height);
+  ctx.drawImage(srcCanvas, 0, 0, dst2dCanvas.width, dst2dCanvas.height);
+}
+
+// Sobrescribimos renderThumbnail: el canvas es 2D, no WebGL.
+renderThumbnail = function(canvas, kind, dir) {
+  canvas.width = 90; canvas.height = 90;
+  const iso = getThumbWebGL();
+  iso.setContents(null, [{ row: 1, col: 1, kind, dir }]);
+  iso.root.rotation.z = 0;
+  iso.render();
+  copyTo2D(iso.renderer.domElement, canvas);
+  __galleryThumbs.push({ canvas2d: canvas, kind, dir, angle: 0, animate: false });
+};
+
+// Marca un thumb por cada kind (el primero en orden de aparicion, que sera
+// dir=0) para que rote. Asi en la galeria, cada tipo tiene UN ejemplo
+// animado y los demas dir quedan estaticos como referencia.
+function startGalleryAnimation() {
+  if (__galleryThumbs.length === 0) return;
+  const seenKinds = new Set();
+  for (const t of __galleryThumbs) {
+    if (!seenKinds.has(t.kind)) {
+      t.animate = true;
+      seenKinds.add(t.kind);
+    }
+  }
+  if (__galleryAnim) cancelAnimationFrame(__galleryAnim);
+  function tick() {
+    const iso = getThumbWebGL();
+    for (const t of __galleryThumbs) {
+      if (!t.animate) continue;
+      t.angle += 0.02;
+      iso.setContents(null, [{ row: 1, col: 1, kind: t.kind, dir: t.dir }]);
+      iso.root.rotation.z = t.angle;
+      iso.render();
+      copyTo2D(iso.renderer.domElement, t.canvas2d);
+    }
+    __galleryAnim = requestAnimationFrame(tick);
+  }
+  tick();
+}
+
+// Wrap buildGallery para arrancar la animacion al final.
+const __origBuildGallery = buildGallery;
+buildGallery = async function() {
+  __galleryThumbs = [];
+  // Carga el status persistente antes de construir, asi los checkboxes salen
+  // con su valor correcto desde el principio.
+  await loadGalleryStatus();
+  __origBuildGallery();
+  startGalleryAnimation();
+};
+
+main();
+</script>
+</body>
+</html>

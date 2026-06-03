@@ -1,0 +1,20 @@
+{
+  "id": "0ef",
+  "cubes": 239,
+  "decorations": [
+    {
+      "row": 2,
+      "col": 2,
+      "kind": "corner_in",
+      "dir": 3
+    },
+    {
+      "row": 1,
+      "col": 1,
+      "kind": "pit",
+      "dir": 0
+    }
+  ],
+  "quality": "good",
+  "updatedAt": "2026-05-16T18:58:32.889Z"
+}

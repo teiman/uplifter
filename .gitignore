@@ -25,3 +25,32 @@ modeditor/*.bsp
 modeditor/*.pts
 modeditor/*.prt
 modeditor/*.lit
+
+# Mod build artifacts (regenerate with mod/build.bat)
+mod/progs.dat
+mod/csprogs.dat
+mod/progs.lno
+mod/csprogs.lno
+
+# Mod runtime state from the installed copy (do not version)
+mod/autosave/
+mod/screenshots/
+mod/ironwail.cfg
+mod/config.cfg
+
+# Mapas: los escribe el ModEditor directamente en D:\quake\uplifter\maps\,
+# no se versionan aqui.
+mod/maps/
+
+# fteqcc binary: keep locally, do not commit
+mod/bin/
+
+# Skyboxes heredados de airquake (~119 MB) — solo versionamos el de Uplifter.
+mod/gfx/env/*
+!mod/gfx/env/uplifter_*
+
+# Motor de terceros (repo git propio, no versionar aqui)
+ref/ironwail/
+
+# Claude runtime
+.claude/scheduled_tasks.lock

@@ -10,7 +10,11 @@
     "start": "npm run build && electron .",
     "dev": "concurrently -k -n vite,electron -c blue,green \"vite\" \"wait-on tcp:5173 && electron . --dev\"",
     "build": "vite build",
-    "electron": "electron ."
+    "electron": "electron .",
+    "build:mod": "..\\mod\\build.bat compile",
+    "build:csmod": "..\\mod\\build.bat compile",
+    "build:allmod": "..\\mod\\build.bat compile",
+    "gen:cloud-bsp": "node scripts/gen-cloud-bsp.js"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

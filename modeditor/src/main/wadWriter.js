@@ -37,6 +37,10 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { QUAKE_PALETTE } = require('../shared/quakePalette');
 
+// NOTE: clouds are no longer generated here. They're produced offline by
+// scripts/gen-clouds.js (→ wads/clouds.wad + wads/clouds.prefabs.json) and
+// placed by mapWriter from the prefab data — see src/main/cloudGen.js.
+
 const TYPE_MIPTEX = 0x44;
 
 /** Find the closest palette index (in the non-fullbright range 0..223)
@@ -223,10 +227,12 @@ function mip0ToRgba(mip0, w, h) {
 }
 
 /** Cheap 2D value noise that wraps on (w, h) — gradient-free, integer
- *  hash. Returns a value in [0, 1]. */
-function noise2(x, y, w, h) {
+ *  hash. Returns a value in [0, 1]. The optional `seed` shifts the hash
+ *  so callers can get independent fields from the same coordinates
+ *  (used by the cloud layers); seed 0 reproduces the original noise. */
+function noise2(x, y, w, h, seed = 0) {
   function hash(ix, iy) {
-    let n = (ix * 374761393 + iy * 668265263) | 0;
+    let n = (ix * 374761393 + iy * 668265263 + seed * 1442695041) | 0;
     n = (n ^ (n >>> 13)) * 1274126177;
     n = (n ^ (n >>> 16)) >>> 0;
     return (n & 0xFFFF) / 0xFFFF;
@@ -458,6 +464,10 @@ async function ensureAutoWad(outPath) {
   });
   const sky    = solidEntry('sky_auto', 140, 180, 230);
   const water  = solidEntry('*water',   30,  80, 160);
+  // Minimap "sea" — same hue as water but as a solid (non-liquid) texture
+  // so it renders flat. Used by the under-bedrock minimap area instead
+  // of *water (which would warp + render translucent).
+  const minimapSea = solidEntry('minimap_sea', 30, 80, 160);
 
   // -- Prop placeholder textures --
   // Green foliage (tree leaves, bush)
@@ -489,6 +499,137 @@ async function ensureAutoWad(outPath) {
   const halfSide = tintedEntry('auto_hside', v => {
     const lum = 90 + Math.floor(v * 70);
     return [Math.min(255, lum + 5), lum, Math.max(0, lum - 10)];
+  });
+
+  // -- Port / container / military placeholder textures ---------------------
+  // All 64×64 (matches the world tile size — user preference: 64×64 is
+  // crispest, 128 is acceptable but blurs when applied to a 64u face, 256+
+  // looks soft). Naming prefixes (ship_*, ctn_*, port_*, mil_*) group them
+  // alphabetically in WAD browsers so the mapper can spot the set fast.
+  //
+  // Ships and hulls --------------------------------------------------------
+  // Grey-blue welded steel plate (ship hull, large freighters).
+  const shipHull = tintedEntry('ship_hull', v => {
+    const lum = 70 + Math.floor(v * 60);                  // 70..130 mid-grey
+    return [Math.max(0, lum - 8), lum, Math.min(255, lum + 18)];
+  });
+  // Rust-streaked variant: clean steel base + warm reddish-brown patches.
+  const shipRust = tintedEntry('ship_rust', v => {
+    if (v > 0.55) {                                       // rust patch
+      const t = (v - 0.55) / 0.45;                        // 0..1 inside patch
+      return [
+        110 + Math.floor(t * 60),                         // 110..170 R
+        50  + Math.floor(t * 30),                         // 50..80   G
+        30  + Math.floor(t * 20),                         // 30..50   B
+      ];
+    }
+    const lum = 70 + Math.floor(v * 50);
+    return [Math.max(0, lum - 8), lum, Math.min(255, lum + 18)];
+  });
+  // Cream / white painted superstructure (ship cabin top, lighthouse).
+  const shipDeck = tintedEntry('ship_deck', v => {
+    const lum = 170 + Math.floor(v * 40);
+    return [Math.min(255, lum + 15), lum, Math.max(0, lum - 30)];
+  });
+  // Red waterline stripe / hazard band.
+  const shipRed = tintedEntry('ship_red', v => {
+    const lum = 110 + Math.floor(v * 40);
+    return [Math.min(255, lum + 60), Math.max(0, lum - 50), Math.max(0, lum - 60)];
+  });
+  // Anti-fouling dark band (boot stripe just above the waterline).
+  const shipBoot = tintedEntry('ship_boot', v => {
+    const lum = 25 + Math.floor(v * 25);                  // 25..50 very dark
+    return [Math.max(0, lum - 5), lum, Math.min(255, lum + 10)];
+  });
+
+  // Shipping containers ----------------------------------------------------
+  // Corrugated steel; 4 colours so a stacked yard reads as a real port.
+  function containerEntry(name, baseR, baseG, baseB) {
+    return tintedEntry(name, v => {
+      const k = 0.85 + v * 0.30;                          // 0.85..1.15 weathering
+      return [
+        Math.min(255, Math.floor(baseR * k)),
+        Math.min(255, Math.floor(baseG * k)),
+        Math.min(255, Math.floor(baseB * k)),
+      ];
+    });
+  }
+  const ctnRed   = containerEntry('ctn_red',   160,  50,  45);  // Maersk-ish red
+  const ctnBlue  = containerEntry('ctn_blue',   45,  85, 150);  // marine blue
+  const ctnGreen = containerEntry('ctn_green',  55, 110,  70);  // industrial green
+  const ctnRust  = containerEntry('ctn_rust',  120,  70,  45);  // brown / rust
+  // Container roof — ribbed, slightly darker than the sides.
+  const ctnTop = tintedEntry('ctn_top', v => {
+    const lum = 55 + Math.floor(v * 35);
+    return [lum, lum, Math.max(0, lum - 5)];
+  });
+
+  // Port infrastructure ----------------------------------------------------
+  // Concrete pier top.
+  const portDock = tintedEntry('port_dock', v => {
+    const lum = 130 + Math.floor(v * 35);
+    return [lum, lum, Math.max(0, lum - 10)];
+  });
+  // Dock side (concrete, darker streaks near the waterline).
+  const portWall = tintedEntry('port_wall', v => {
+    const lum = 90 + Math.floor(v * 50);
+    return [lum, lum, Math.max(0, lum - 5)];
+  });
+  // Wooden pier planks (fishing docks).
+  const portPier = tintedEntry('port_pier', v => {
+    const lum = 75 + Math.floor(v * 50);
+    return [Math.min(255, lum + 25), Math.max(0, lum - 5), Math.max(0, lum - 30)];
+  });
+  // Yellow-and-black hazard stripe (loading edge / forklift lane).
+  const portHaz = tintedEntry('port_haz', v => (v > 0.5
+    ? [220, 200, 30]                                      // yellow
+    : [25, 25, 25]));                                     // near-black
+  // Galvanised bollard / cleat metal.
+  const portBollard = tintedEntry('port_boll', v => {
+    const lum = 100 + Math.floor(v * 50);
+    return [lum, Math.max(0, lum - 5), Math.max(0, lum - 15)];
+  });
+  // Safety-orange crane paint.
+  const portCrane = tintedEntry('port_crane', v => {
+    const lum = 130 + Math.floor(v * 50);
+    return [Math.min(255, lum + 70), Math.max(0, lum - 20), Math.max(0, lum - 80)];
+  });
+
+  // Military ---------------------------------------------------------------
+  // Olive-drab base (vehicles, equipment).
+  const milGreen = tintedEntry('mil_green', v => {
+    const lum = 55 + Math.floor(v * 50);
+    return [Math.max(0, lum - 10), lum, Math.max(0, lum - 25)];
+  });
+  // Two-tone disruptive camouflage (olive + brown).
+  const milCamo = tintedEntry('mil_camo', v => {
+    if (v > 0.55) {                                       // brown patches
+      const lum = 55 + Math.floor((v - 0.55) * 100);
+      return [Math.min(255, lum + 25), lum, Math.max(0, lum - 30)];
+    }
+    const lum = 50 + Math.floor(v * 60);
+    return [Math.max(0, lum - 10), lum, Math.max(0, lum - 25)];
+  });
+  // Desert tan (sandbags, light vehicles).
+  const milTan = tintedEntry('mil_tan', v => {
+    const lum = 110 + Math.floor(v * 50);
+    return [Math.min(255, lum + 30), lum, Math.max(0, lum - 40)];
+  });
+  // Sandbag stack (browner and grainier than tan).
+  const milSandbag = tintedEntry('mil_sand', v => {
+    const lum = 95 + Math.floor(v * 60);
+    return [Math.min(255, lum + 25), Math.max(0, lum - 5), Math.max(0, lum - 45)];
+  });
+  // Bunker concrete (rougher and greyer than dock concrete).
+  const milBunker = tintedEntry('mil_bunker', v => {
+    const lum = 90 + Math.floor(v * 55);
+    return [Math.max(0, lum - 5), lum, lum];
+  });
+  // Chain-link / razor-wire mesh — opaque grey-blue (for fence faces use
+  // the {-prefixed cloud trick if you want true cut-out wire later).
+  const milWire = tintedEntry('mil_wire', v => {
+    const lum = 110 + Math.floor(v * 40);
+    return [lum, lum, Math.min(255, lum + 10)];
   });
 
   // Skip texture: used on invisible faces of billboard brushes.
@@ -525,7 +666,16 @@ async function ensureAutoWad(outPath) {
   // were injected into text.wad offline (see scripts/inject-tree-into-text-wad.js),
   // and the road/airbase textures have native replacements in text.wad.
 
-  const all = [autoWall, sky, water, gren3a, wood, rock, wood18, metal, halfSide, skip, nullTex, lampFb];
+  // Clouds are NOT generated here — see scripts/gen-clouds.js → clouds.wad
+  // (+ clouds.prefabs.json), placed by mapWriter from the prefab data.
+
+  const portMil = [
+    shipHull, shipRust, shipDeck, shipRed, shipBoot,
+    ctnRed, ctnBlue, ctnGreen, ctnRust, ctnTop,
+    portDock, portWall, portPier, portHaz, portBollard, portCrane,
+    milGreen, milCamo, milTan, milSandbag, milBunker, milWire,
+  ];
+  const all = [autoWall, sky, water, minimapSea, gren3a, wood, rock, wood18, metal, halfSide, skip, nullTex, lampFb, ...portMil];
 
   await writeWad(outPath, all.map(e => ({ name: e.name, lump: e.lump })));
 
@@ -536,10 +686,48 @@ async function ensureAutoWad(outPath) {
   };
 }
 
+/**
+ * Build the WAD usado por el modo debug: una textura por kind de erosion,
+ * con un color plano distinto. El nombre de la textura sirve como ID al
+ * apuntar con el comando `debug_point` del motor Ironwail patcheado.
+ *
+ * Nombres (≤15 chars para encajar en `name[16]` de Quake):
+ *   dbg_terrain      — cubos de terreno
+ *   dbg_corner_in    — brush corner_in (cubo con clip diagonal)
+ *   dbg_corner_tip   — piramide-tip apilada sobre corner_in
+ *   dbg_ramp         — cuna cardinal
+ *   dbg_ramp_diag    — tetraedro diagonal (ramp_diag / corner_out)
+ *   dbg_cube         — cubo decoracion 'cube'
+ *   dbg_other        — fallback para kinds aun sin geometria propia
+ */
+async function ensureDebugWad(outPath) {
+  const W = 64, H = 64;
+
+  function solidEntry(name, r, g, b) {
+    const idx = nearestPaletteIndex(r, g, b);
+    const lump = buildSolidMiptex(name, W, H, idx);
+    return { name, lump };
+  }
+
+  const all = [
+    solidEntry('dbg_terrain',    160, 120,  80),  // marron tierra
+    solidEntry('dbg_corner_in',  220,  60,  60),  // rojo
+    solidEntry('dbg_corner_tip',  60, 220,  60),  // verde
+    solidEntry('dbg_ramp',       240, 220,  60),  // amarillo
+    solidEntry('dbg_ramp_diag',  220, 120, 220),  // magenta
+    solidEntry('dbg_cube',        60, 180, 240),  // cian
+    solidEntry('dbg_other',      180, 180, 180),  // gris
+  ];
+
+  await writeWad(outPath, all);
+  return { path: outPath, name: 'debug' };
+}
+
 module.exports = {
   writeWad,
   buildSolidMiptex,
   allocMiptexLump,
   nearestPaletteIndex,
   ensureAutoWad,
+  ensureDebugWad,
 };

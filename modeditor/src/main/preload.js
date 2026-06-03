@@ -27,9 +27,22 @@ contextBridge.exposeInMainWorld('modeditor', {
 
   bsp: {
     deploy: (opts) => ipcRenderer.invoke('bsp:deploy', opts ?? {}),
+    findExisting: (opts) => ipcRenderer.invoke('bsp:findExisting', opts ?? {}),
   },
 
   quake: {
     launch: (opts) => ipcRenderer.invoke('quake:launch', opts ?? {}),
+  },
+
+  // Log al main para entornos sin DevTools accesibles. Escribe a
+  // tmp/debug.log con timestamp. Sin retorno — fire-and-forget.
+  debug: {
+    log: (...args) => {
+      const line = args.map(a => {
+        if (typeof a === 'string') return a;
+        try { return JSON.stringify(a); } catch { return String(a); }
+      }).join(' ');
+      ipcRenderer.invoke('debug:log', line);
+    },
   },
 });
