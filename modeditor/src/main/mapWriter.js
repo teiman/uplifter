@@ -31,8 +31,12 @@ const {
   SEA_LEVEL_H, SEA_LEVEL_Z,
   BEDROCK_TOP_Z, BEDROCK_THICKNESS,
   SKY_TOP_Z, SKY_WALL_THICKNESS,
-  CLOUD_LAYER_Z, CLOUD_COUNT, CLOUD_FIELD_HALF, CLOUD_BRUSH_SIZE,
-  SKY_TEXTURE, WATER_TEXTURE, BEDROCK_TEXTURE,
+  CLOUD_LAYER_Z, CLOUD_FIELD_HALF, CLOUD_BRUSH_SIZE,
+  CLOUD_CLUSTERS, CLOUD_PER_CLUSTER_MIN, CLOUD_PER_CLUSTER_MAX, CLOUD_CLUSTER_RADIUS,
+  CLOUD_CLUSTER_SEP_MIN, CLOUD_CLUSTER_SEP_MAX,
+  CLOUD2_CLUSTERS, CLOUD2_PER_CLUSTER_MIN, CLOUD2_PER_CLUSTER_MAX, CLOUD2_CLUSTER_RADIUS,
+  CLOUD2_CLUSTER_SEP_MIN, CLOUD2_CLUSTER_SEP_MAX,
+  SKY_TEXTURE, WATER_TEXTURE, WATER_SHADES, BEDROCK_TEXTURE,
   MINIMAP_SEA_TEXTURE,
   MINIMAP_HEIGHT, MINIMAP_TILE_THICKNESS,
   MINIMAP_TOP_Z, MINIMAP_BOTTOM_Z, MINIMAP_SEA_Z,
@@ -583,24 +587,30 @@ function buildMapText({ tilemap, wadKey, debug = false, phong = true }) {
     BEDROCK_TEXTURE,
   ));
 
-  // ---------- water (global) ----------
-  // One brush from bedrock top up to sea level, covering the (possibly
-  // strict-shrunk) world box. Liquid texture (prefix '*') makes qbsp
-  // emit warpsurface faces. The water surface sits WATER_DROP units
-  // below SEA_LEVEL_Z so beach tiles (h=0, top at SEA_LEVEL_Z) read as
-  // a slight shoreline instead of coplanar — both better visually and
-  // required for qbsp to avoid coplanar-face problems.
+  // ---------- water (coastal depth bands) ----------
+  // The sea covers the whole world box from bedrock top up to (just below)
+  // sea level. Liquid texture (prefix '*') makes qbsp emit warpsurface
+  // faces. The surface sits WATER_DROP units below SEA_LEVEL_Z so beach
+  // tiles (h=0, top at SEA_LEVEL_Z) read as a slight shoreline instead of
+  // coplanar — better visually and avoids qbsp coplanar-face problems.
   //
-  // Saltamos el water brush en modo flat: el terreno ya esta aplanado a
-  // tierra firme en toda la malla (sin celdas sumergidas), asi que no
-  // hay agua que cubrir y nos ahorramos la cara gigante del water box.
+  // Instead of one flat '*water' brush we shade the sea by distance to the
+  // coast: shallow water touching land is bright turquoise (*water1), going
+  // darker out to open sea (*water4). To keep brush count low (and avoid
+  // coplanar overlaps) we DON'T emit one brush per cell — we classify each
+  // submerged grid cell into a shade band, then greedily merge same-shade
+  // cells along each row into wide strips (one brush per run). Open ocean
+  // outside the grid is the deepest shade.
+  //
+  // Skipped in flat mode: the terrain is flattened to dry land everywhere
+  // (no submerged cells), so there's no sea to cover.
   if (tilemap.quality !== 'flat') {
     const WATER_DROP = 8;
-    out.push(boxBrush(
-      { minX: xMin, maxX: xMax, minY: yMin, maxY: yMax,
-        minZ: BEDROCK_TOP_Z, maxZ: SEA_LEVEL_Z - WATER_DROP },
-      WATER_TEXTURE,
-    ));
+    emitWaterBands({
+      out, heights, cols, rows, cellSize, gridHalfX, gridHalfY,
+      xMin, xMax, yMin, yMax,
+      waterMinZ: BEDROCK_TOP_Z, waterMaxZ: SEA_LEVEL_Z - WATER_DROP,
+    });
   }
 
   // ---------- terrain cells + objects ----------
@@ -1440,17 +1450,113 @@ function buildMapText({ tilemap, wadKey, debug = false, phong = true }) {
   out.push('}');
 
   // ---------- clouds ----------
-  // Scatter CLOUD_COUNT `cloud` point entities at the cloud altitude. Each
-  // loads the offline-baked solid model (maps/b_cloud0.bsp) as a NON-SOLID
-  // entity (the QC `cloud` sets SOLID_NOT) — the heli flies through. The
-  // model + its textures live in that .bsp, so the map needs no cloud
-  // brushes or wad. Skipped in 'flat' mode (no light pass / fast iterate).
+  // Place `cloud` point entities at the cloud altitude in tight CLUSTERS, in
+  // two layers (big lumpy cumulus + small 2-cloud puffs filling the gaps), so
+  // models overlap and merge. Each entity loads one of the 5 offline-baked
+  // models (maps/b_cloud0..4.bsp) — the QC `cloud` picks which at random and
+  // sets SOLID_NOT (the heli flies through). Models + textures live in the
+  // .bsps, so the map needs no cloud brushes or wad. Skipped in 'flat' mode.
   if (tilemap.quality !== 'flat') {
     const cloudN = emitCloudEntities(out, xMin, xMax, yMin, yMax);
-    if (cloudN > 0) info.push(`clouds: ${cloudN} cloud entities (model maps/b_cloud0.bsp, non-solid)`);
+    if (cloudN > 0) info.push(`clouds: ${cloudN} cloud entities in ${CLOUD_CLUSTERS}+${CLOUD2_CLUSTERS} clusters (models b_cloud0..4, non-solid)`);
   }
 
   return { text: out.join('\n') + '\n', warnings, info };
+}
+
+/**
+ * Emit the sea as coastal depth bands. Builds a per-grid-cell shade index by
+ * BFS distance from the nearest land cell (4-connected), maps distance →
+ * WATER_SHADES band (0 = shallow/bright at the coast, last = deep/dark), then
+ * greedily merges same-shade cells along each row into wide strips (one brush
+ * per run) to keep the brush count low. The grid is wrapped by open ocean
+ * (everything outside the grid), emitted as full-width deep-water brushes
+ * north of, south of, and flanking the grid using the deepest shade.
+ *
+ * All water brushes span [waterMinZ, waterMaxZ] (bedrock top → just below sea
+ * level) so the sea is a solid volume; only the texture varies by band.
+ */
+function emitWaterBands({ out, heights, cols, rows, cellSize, gridHalfX, gridHalfY,
+                          xMin, xMax, yMin, yMax, waterMinZ, waterMaxZ }) {
+  const shades = WATER_SHADES;
+  const deep = shades[shades.length - 1];
+  const SEA = SEA_LEVEL_H;
+  const water = (c, r) => heights[r * cols + c] < SEA;   // submerged cell?
+
+  // BFS distance (in cells) from land to each submerged cell. dist[i] = 0 for
+  // land, 1 for water adjacent to land, etc. Cells stay -1 (unreached) only
+  // if the whole grid is water (no land at all) — handled below.
+  const N = cols * rows;
+  const dist = new Int32Array(N).fill(-1);
+  let queue = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (!water(c, r)) { dist[r * cols + c] = 0; queue.push(r * cols + c); }
+    }
+  }
+  // If there's no land at all, every grid cell is open sea → deepest shade.
+  const allSea = queue.length === 0;
+  let head = 0;
+  while (head < queue.length) {
+    const i = queue[head++];
+    const c = i % cols, r = (i - c) / cols, d = dist[i];
+    const nb = [[c, r - 1], [c, r + 1], [c - 1, r], [c + 1, r]];
+    for (const [nc, nr] of nb) {
+      if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+      const j = nr * cols + nc;
+      if (dist[j] !== -1) continue;
+      dist[j] = d + 1;
+      queue.push(j);
+    }
+  }
+
+  // distance (≥1, in cells) → shade band index. Bands 1,2,3 cells out map to
+  // shades 0,1,2; everything ≥4 cells from land is the deepest shade.
+  const shadeOf = (cellDist) => {
+    if (cellDist <= 1) return 0;
+    if (cellDist === 2) return 1;
+    if (cellDist === 3) return 2;
+    return shades.length - 1;
+  };
+
+  // Cell (col,row) → world XY box. col runs west→east; row 0 is the NORTH
+  // edge (largest Y), matching the terrain pass.
+  const cellX0 = (c) => -gridHalfX + c * cellSize;
+  const cellY0 = (r) => -gridHalfY + ((rows - 1) - r) * cellSize;  // south edge of row
+  const pushWater = (bx0, bx1, by0, by1, tex) => {
+    out.push(boxBrush({ minX: bx0, maxX: bx1, minY: by0, maxY: by1, minZ: waterMinZ, maxZ: waterMaxZ }, tex));
+  };
+
+  // -- Open ocean wrapping the grid (full world box minus the grid rect). --
+  const gx0 = Math.max(xMin, -gridHalfX), gx1 = Math.min(xMax, gridHalfX);
+  const gy0 = Math.max(yMin, -gridHalfY), gy1 = Math.min(yMax, gridHalfY);
+  if (yMax > gy1) pushWater(xMin, xMax, gy1, yMax, deep);            // north strip
+  if (gy0 > yMin) pushWater(xMin, xMax, yMin, gy0, deep);            // south strip
+  if (gx0 > xMin) pushWater(xMin, gx0, gy0, gy1, deep);              // west strip
+  if (xMax > gx1) pushWater(gx1, xMax, gy0, gy1, deep);              // east strip
+
+  // -- Bands inside the grid: per row, greedy-merge same-shade water runs. --
+  // Land cells (dist 0) emit no water (the terrain brush covers them).
+  for (let r = 0; r < rows; r++) {
+    let runStart = -1, runShade = -1;
+    const flush = (cEnd) => {
+      if (runStart < 0) return;
+      const bx0 = cellX0(runStart), bx1 = cellX0(cEnd) + cellSize;
+      const by0 = cellY0(r), by1 = by0 + cellSize;
+      pushWater(bx0, bx1, by0, by1, shades[runShade]);
+      runStart = -1; runShade = -1;
+    };
+    for (let c = 0; c < cols; c++) {
+      const d = dist[r * cols + c];
+      const isWater = allSea || (d >= 1);   // dist 0 = land (no water here)
+      if (!isWater) { flush(c - 1); continue; }
+      const sh = allSea ? (shades.length - 1) : shadeOf(d);
+      if (runStart >= 0 && sh === runShade) continue;   // extend current run
+      flush(c - 1);
+      runStart = c; runShade = sh;
+    }
+    flush(cols - 1);
+  }
 }
 
 /** Deterministic mulberry32 PRNG — fixed seed → identical cloud layout on
@@ -1465,31 +1571,84 @@ function mulberry32(seed) {
   };
 }
 
-/** Emit CLOUD_COUNT `cloud` point entities scattered across the (clamped)
- *  world at CLOUD_LAYER_Z. Returns how many were emitted. */
+/** Emit one cloud LAYER of clustered `cloud` entities, all at CLOUD_LAYER_Z.
+ *  Picks cfg.clusters cluster centres across the (clamped) field — each kept
+ *  a random [sepMin,sepMax] from every centre already placed (incl. other
+ *  layers, via `centres`) — then drops perMin..perMax clouds within
+ *  cfg.radius of each so they overlap and merge. The model each one shows is
+ *  chosen at random in QC. `centres` accumulates across layers so they don't
+ *  stack on the same spot. Returns how many entities were emitted. */
+function emitCloudLayer(out, field, rand, cfg, centres) {
+  const { fx0, fx1, fy0, fy1 } = field;
+  const span = cfg.perMax - cfg.perMin + 1;
+  const sepRange = cfg.sepMax - cfg.sepMin;
+  let n = 0;
+  for (let k = 0; k < cfg.clusters; k++) {
+    // Pick a centre kept at least a random [sepMin,sepMax] from every centre
+    // placed so far (rejection sampling). Relax the spacing if the field is
+    // too tight to honour it within a budget of tries, so we never hang.
+    let cx, cy;
+    for (let attempt = 0; ; attempt++) {
+      cx = fx0 + (fx1 - fx0) * rand();
+      cy = fy0 + (fy1 - fy0) * rand();
+      const sep = cfg.sepMin + rand() * sepRange;
+      const relax = Math.max(0.25, 1 - attempt / 60);   // ease the rule if it won't fit
+      let ok = true;
+      for (const c of centres) {
+        if (Math.hypot(cx - c[0], cy - c[1]) < sep * relax) { ok = false; break; }
+      }
+      if (ok || attempt >= 120) break;
+    }
+    centres.push([cx, cy]);
+    const count = cfg.perMin + Math.floor(rand() * span);
+    for (let c = 0; c < count; c++) {
+      // Offset within the cluster: uniform in a disc of cfg.radius.
+      const a = rand() * Math.PI * 2;
+      const r = Math.sqrt(rand()) * cfg.radius;
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      const z = CLOUD_LAYER_Z + (rand() - 0.5) * 120; // slight height variation
+      const ang = Math.floor(rand() * 360);           // yaw rotates the bmodel
+      out.push('{');
+      out.push('"classname" "cloud"');
+      out.push(`"origin" "${Math.round(x)} ${Math.round(y)} ${Math.round(z)}"`);
+      out.push(`"angle" "${ang}"`);
+      out.push('}');
+      n++;
+    }
+  }
+  return n;
+}
+
+/** Emit the cloud field: TWO layers at CLOUD_LAYER_Z — big clusters (many
+ *  clouds) plus a second layer of small 2-cloud clusters filling the gaps.
+ *  Both share one `centres` list so clusters never stack on the same spot.
+ *  Returns the total number of cloud entities emitted. */
 function emitCloudEntities(out, xMin, xMax, yMin, yMax) {
   const rand = mulberry32(0xC10D5EED);
-  // Keep clouds inside the world box: the model spans ±~CLOUD_BRUSH_SIZE/2
-  // around its origin, so inset the field by that plus a little.
-  const margin = CLOUD_BRUSH_SIZE / 2 + 80;
+  // Keep clouds inside the world box. A cloud can sit up to the largest
+  // cluster radius from its centre, so inset the field for the CENTRES by
+  // that (plus the model's half-footprint and a little slack).
+  const maxRadius = Math.max(CLOUD_CLUSTER_RADIUS, CLOUD2_CLUSTER_RADIUS);
+  const margin = CLOUD_BRUSH_SIZE / 2 + maxRadius + 80;
   const fx0 = Math.max(xMin + margin, -CLOUD_FIELD_HALF);
   const fx1 = Math.min(xMax - margin, +CLOUD_FIELD_HALF);
   const fy0 = Math.max(yMin + margin, -CLOUD_FIELD_HALF);
   const fy1 = Math.min(yMax - margin, +CLOUD_FIELD_HALF);
   if (fx1 <= fx0 || fy1 <= fy0) return 0;
+  const field = { fx0, fx1, fy0, fy1 };
+  const centres = [];
   let n = 0;
-  for (let c = 0; c < CLOUD_COUNT; c++) {
-    const x = fx0 + (fx1 - fx0) * rand();
-    const y = fy0 + (fy1 - fy0) * rand();
-    const z = CLOUD_LAYER_Z + (rand() - 0.5) * 120;   // slight height variation
-    const ang = Math.floor(rand() * 360);             // yaw rotates the bmodel
-    out.push('{');
-    out.push('"classname" "cloud"');
-    out.push(`"origin" "${Math.round(x)} ${Math.round(y)} ${Math.round(z)}"`);
-    out.push(`"angle" "${ang}"`);
-    out.push('}');
-    n++;
-  }
+  // Layer 1: the big lumpy cumulus clusters.
+  n += emitCloudLayer(out, field, rand, {
+    clusters: CLOUD_CLUSTERS, perMin: CLOUD_PER_CLUSTER_MIN, perMax: CLOUD_PER_CLUSTER_MAX,
+    radius: CLOUD_CLUSTER_RADIUS, sepMin: CLOUD_CLUSTER_SEP_MIN, sepMax: CLOUD_CLUSTER_SEP_MAX,
+  }, centres);
+  // Layer 2: small 2-cloud clusters filling the gaps, same altitude.
+  n += emitCloudLayer(out, field, rand, {
+    clusters: CLOUD2_CLUSTERS, perMin: CLOUD2_PER_CLUSTER_MIN, perMax: CLOUD2_PER_CLUSTER_MAX,
+    radius: CLOUD2_CLUSTER_RADIUS, sepMin: CLOUD2_CLUSTER_SEP_MIN, sepMax: CLOUD2_CLUSTER_SEP_MAX,
+  }, centres);
   return n;
 }
 

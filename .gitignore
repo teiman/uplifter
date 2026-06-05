@@ -26,11 +26,17 @@ modeditor/*.pts
 modeditor/*.prt
 modeditor/*.lit
 
-# Mod build artifacts (regenerate with mod/build.bat)
+# Mod build artifacts (regenerate with mod/build.bat). build.bat compiles in
+# the mod dir and copies the .dat to the install; these are intermediates.
 mod/progs.dat
 mod/csprogs.dat
 mod/progs.lno
 mod/csprogs.lno
+# Same artifacts if fteqcc ever writes them at the repo root (older flows).
+/progs.dat
+/csprogs.dat
+/progs.lno
+/csprogs.lno
 
 # Mod runtime state from the installed copy (do not version)
 mod/autosave/

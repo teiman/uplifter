@@ -42,6 +42,10 @@ float STAT_HUD_UPGRADES   = 49;
 // Newscast del día: 0 = sin newscast; 1..5 = día cuyo titular se muestra.
 // CSQC pinta el overlay BREAKING NEWS (canal de noticias 24h) cuando > 0.
 float STAT_HUD_INTRO      = 50;
+// Persistent mission line at the bottom of the screen (24h-news style strip).
+// Code selects the text: 0 = none, 1 = "fly to the marked pickup", 2 = "pick
+// up survivors", 3 = "RETURN — deliver survivors to the ship".
+float STAT_HUD_MISSION    = 51;
 float EV_FLOAT = 2;
 void(float num, float type, .__variant fld) clientstat = #232;
 
@@ -59,6 +63,13 @@ void(float num, float type, .__variant fld) clientstat = #232;
 .float star_shoot_cooldown;
 // Next time the "high flight" star tick fires.
 .float star_highflight_next;
+// Cloud stealth. A cloud_trigger refreshes in_cloud_until every frame the
+// heli is inside a cloud volume; while in_cloud_until >= time the heli is
+// "in cloud". cloud_hide_at is when stealth becomes EFFECTIVE: set on entry
+// to time + CLOUD_HIDE_DELAY, cleared on exit. Hidden iff in cloud AND
+// time >= cloud_hide_at. (See stars.qc, misc.qc cloud_trigger.)
+.float in_cloud_until;
+.float cloud_hide_at;
 // Scrap inventory: integer count. Each piece picked up adds 1. Healing
 // consumes 1 per heal tick. Respawn snaps the count back to SCRAP_RESPAWN_COUNT.
 .float scrap;
@@ -78,6 +89,11 @@ void(float num, float type, .__variant fld) clientstat = #232;
 .float obj_kind;     // 0=pickup, 1=ship, -1=none
 // CSQC DANGER banner state, broadcast every PreThink. See STAT_HUD_DANGER.
 .float hud_danger;
+// CSQC mission-line code, broadcast every PreThink. See STAT_HUD_MISSION.
+.float hud_mission;
+// Current day number mirrored to the player so it can be sent as a stat to
+// CSQC (the HUD shows a "DAY n" badge). Set each PreThink from g_day.
+.float hud_day;
 // Set by monster_rad whenever it has lock on the player. CSQC reads this
 // (indirectly via hud_danger) to colour the DANGER banner red. The 1.5s
 // grace beyond the radar's own 1Hz tick avoids the banner flickering
@@ -380,7 +396,7 @@ float AS_MISSILE    = 4;
 .float waitmax;
 .float distance;
 .float volume;
-void (vector ang) makevectors = #1; 
+void (vector ang) makevectors = #1;
 void (entity e, vector o) setorigin = #2; 
 void (entity e, string m) setmodel = #3; 
 void (entity e, vector min, vector max) setsize = #4; 

@@ -510,18 +510,71 @@ void() func_illusionary =
 	self.movetype = MOVETYPE_NONE;
 	self.solid = SOLID_NOT;
 	setmodel(self, self.model);
-	makestatic();
+	makestatic(self);
 };
 
-// Decorative cloud. A point entity placed by the map editor that loads the
-// offline-baked solid cloud volume (maps/b_cloud0.bsp, precached in
+// Cloud stealth volume. Half-extents of the invisible trigger box around a
+// cloud's origin (the visible model spans ~±440 XY, ~±220 Z; we use a bit
+// less than the full footprint so the heli has to be properly inside).
+vector CLOUD_TRIGGER_MINS = '-360 -360 -170';
+vector CLOUD_TRIGGER_MAXS = '360 360 170';
+
+// Touch of a cloud_trigger: refresh the piloting player's "in cloud" timer.
+// `other` is whatever entered; the heli bmodel's .owner is the player. We
+// give in_cloud_until a small grace (0.25s) so flying between two adjacent
+// cloud triggers doesn't flicker out of stealth for a frame.
+void() cloud_trigger_touch =
+{
+	local entity plyr;
+
+	plyr = other.owner;
+	if (plyr == world) plyr = other;        // in case the player touches directly
+	if (plyr.classname != "player")
+		return;
+
+	// First frame entering (was not in a cloud last frame): arm the hide
+	// cooldown. While already inside, leave cloud_hide_at untouched so the
+	// 1s timer keeps counting toward "effective".
+	if (plyr.in_cloud_until < time)
+		plyr.cloud_hide_at = (time + CLOUD_HIDE_DELAY);
+	plyr.in_cloud_until = (time + 0.25);
+};
+
+// Decorative cloud. A point entity placed by the map editor that loads one
+// of the offline-baked cloud volumes (maps/b_cloud0..4.bsp, all precached in
 // worldspawn) as a NON-SOLID model — the heli flies through it. No alpha.
-// `angle` (from the map) rotates the bmodel for variety.
+// The editor scatters these in tight clusters (several very close) so they
+// overlap and read as one big lumpy cumulus. Which of the 5 models this
+// instance shows is chosen at random right here. "angle" rotates the bmodel.
+//
+// Stealth: spawns an invisible SOLID_TRIGGER sibling (cloud_trigger) at the
+// same spot so the heli can "hide" inside (see stars.qc). The trigger must
+// stay a live edict (touch needs it), so only the VISIBLE model is
+// makestatic'd — that one never moves/thinks, so we push it to the client
+// once and free its server edict (no per-frame cost).
 void() cloud =
 {
-	setmodel(self, "maps/b_cloud0.bsp");
+	local float r;
+	local entity trig;
+
+	// Invisible stealth trigger sibling — created BEFORE makestatic frees us.
+	trig = spawn();
+	trig.classname = "cloud_trigger";
+	trig.solid = SOLID_TRIGGER;
+	trig.movetype = MOVETYPE_NONE;
+	setorigin(trig, self.origin);
+	setsize(trig, CLOUD_TRIGGER_MINS, CLOUD_TRIGGER_MAXS);
+	trig.touch = cloud_trigger_touch;
+
+	r = random();
+	if      (r < 0.2) setmodel(self, "maps/b_cloud0.bsp");
+	else if (r < 0.4) setmodel(self, "maps/b_cloud1.bsp");
+	else if (r < 0.6) setmodel(self, "maps/b_cloud2.bsp");
+	else if (r < 0.8) setmodel(self, "maps/b_cloud3.bsp");
+	else              setmodel(self, "maps/b_cloud4.bsp");
 	self.solid = SOLID_NOT;
 	self.movetype = MOVETYPE_NONE;
+	makestatic(self);
 };
 
 void() func_episodegate =

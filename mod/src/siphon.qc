@@ -130,7 +130,15 @@ void() Siphon_Tick =
 				if ((self.pax < PICKUP_CAPACITY))
 				{
 					self.pax = (self.pax + 1);
-					Day_OnCivilianConsumed();
+					// Siphoning a civilian is a PICKUP (it's now aboard, to be
+					// delivered at the ship), not a delivery. Keep the field
+					// and pickup bookkeeping straight: free its waiting slot
+					// and decrement g_wave_left.
+					if ((cand.civ_pickup != world) && (cand.civ_pickup.civ_alive > 0))
+					{
+						cand.civ_pickup.civ_alive = (cand.civ_pickup.civ_alive - 1);
+					}
+					Day_OnCivilianPickedUp();
 					sound(veh, CHAN_ITEM, "items/r_item1.wav", 1, ATTN_NORM);
 					remove(cand);
 				}

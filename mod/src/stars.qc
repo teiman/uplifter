@@ -17,6 +17,42 @@ float STAR_DECAY_NORMAL    = 0.05; // stars/sec lost in normal flight
 float STAR_DECAY_SIGILO    = 0.25; // stars/sec lost while flying low
 float STAR_SHOOT_COOLDOWN  = 0.5;  // min seconds between successive +stars from gunfire
 
+// Cloud stealth. Hiding inside a cloud is a third stealth mode (alongside
+// flying low). It is not instant: on entering a cloud the heli must stay
+// inside CLOUD_HIDE_DELAY seconds before the invisibility becomes EFFECTIVE.
+// While effectively hidden, enemies below 5★ lose the target and stars decay
+// fast (you're shaking off the heat). The fields live on the player:
+//   in_cloud_until : refreshed by cloud_trigger_touch each frame inside.
+//   cloud_hide_at  : time the hide becomes effective (set on entry).
+float CLOUD_HIDE_DELAY     = 1.0;  // seconds inside a cloud before hidden
+float STAR_DECAY_CLOUD     = 0.40; // stars/sec lost while effectively hidden
+
+// TRUE while the player is physically inside a cloud volume (a cloud_trigger
+// is touching the heli this frame, within the 0.25s grace).
+float() Stars_InCloud =
+{
+	if ((self.in_cloud_until >= time))
+	{
+		return (TRUE);
+	}
+	return (FALSE);
+};
+
+// TRUE only once the cloud hide has become EFFECTIVE: inside a cloud AND the
+// CLOUD_HIDE_DELAY cooldown has elapsed since entering.
+float() Stars_CloudHidden =
+{
+	if (!Stars_InCloud())
+	{
+		return (FALSE);
+	}
+	if ((time < self.cloud_hide_at))
+	{
+		return (FALSE);   // still inside the entry cooldown — not hidden yet
+	}
+	return (TRUE);
+};
+
 void(float n) Stars_Set =
 {
 	if ((n < 0))
@@ -118,7 +154,11 @@ void() Stars_DecayTick =
 		return;
 	}
 	self.star_decay_next = (time + STAR_DECAY_TICK);
-	if (Stars_InSigilo())
+	if (Stars_CloudHidden())
+	{
+		rate = STAR_DECAY_CLOUD;     // shaking off the heat inside a cloud
+	}
+	else if (Stars_InSigilo())
 	{
 		rate = STAR_DECAY_SIGILO;
 	}
@@ -194,13 +234,23 @@ float(entity player) Stars_EnemyShouldEngage =
 	}
 	d = vlen((pveh.origin - self.origin));
 
-	// Stealth from low flight, applies at <5★.
+	// Stealth from low flight AND cloud hiding, both apply at <5★. Evaluate
+	// them with self temporarily set to the player (the Stars_* helpers read
+	// `self`).
 	{
 		local entity osave;
+		local float hidden;
 		osave = self;
 		self = player;
 		low = Stars_InSigilo();
+		hidden = Stars_CloudHidden();
 		self = osave;
+
+		// Effectively hidden in a cloud: invisible at ANY range (<5★).
+		if (hidden)
+		{
+			return (FALSE);
+		}
 	}
 	if ((low && (d > SIGILO_DETECT_RADIUS)))
 	{

@@ -18,7 +18,14 @@
 #define STAT_HUD_OBJ_DOTRGT 44
 #define STAT_HUD_OBJKIND    45
 #define STAT_HUD_DANGER     46
+#define STAT_HUD_DAY        47
 #define STAT_HUD_INTRO      50
+#define STAT_HUD_MISSION    51
+
+// Height of the bottom mission strip. The rest of the bottom HUD is raised by
+// this much so nothing overlaps it. Keep in sync with Hud_DrawMissionBar's
+// band_h (22) plus a couple of px of air.
+#define MISSION_BAR_H 24
 
 #define NUM_VEHICLES 11
 
@@ -399,24 +406,92 @@ static void Hud_DrawMission(vector virtsize)
 	drawstring([text_x, text_y, 0], strcat(side, label), '14 14 0', textcol, 1, 0);
 };
 
+// Persistent mission strip along the BOTTOM of the screen, styled like the
+// 24h-news lower band (a semi-transparent black band + a coloured label block
+// + the objective text). Server packs the current objective into
+// STAT_HUD_MISSION: 0 none, 1 fly to pickup, 2 pick up survivors, 3 return
+// to ship to deliver.
+static void Hud_DrawMissionBar(vector virtsize)
+{
+	float code;
+	float sw;
+	float sh;
+	string label;       // coloured block on the left
+	string text;        // objective description
+	vector blockcol;
+	float band_h;
+	float band_y;
+	float block_w;
+
+	code = getstatf(STAT_HUD_MISSION);
+	if (code < 1) return;
+
+	sw = virtsize_x;
+	sh = virtsize_y;
+
+	if (code == 3)
+	{
+		label = " RETURN ";
+		text  = "Deliver the survivors to the ship";
+		blockcol = '0.15 0.45 0.85';   // blue = go home
+	}
+	else if (code == 2)
+	{
+		label = " RESCUE ";
+		text  = "Pick up the survivors";
+		blockcol = '0.75 0.05 0.05';   // red = active rescue
+	}
+	else
+	{
+		label = " RESCUE ";
+		text  = "Fly to the marked pickup";
+		blockcol = '0.75 0.05 0.05';
+	}
+
+	band_h = 22;
+	band_y = sh - band_h;
+	block_w = strlen(label) * 10 + 4;
+
+	// Band background.
+	drawfill([0, band_y, 0], [sw, band_h, 0], '0 0 0', 0.6, 0);
+	// Coloured label block.
+	drawfill([0, band_y, 0], [block_w, band_h, 0], blockcol, 1, 0);
+	drawstring([2, band_y + 5, 0], label, '10 10 0', '1 1 1', 1, 0);
+	// Objective text after the block.
+	drawstring([block_w + 8, band_y + 5, 0], text, '10 10 0', '1 1 1', 0.95, 0);
+};
+
 // "DANGER" banner under the compass. Shown while the player is above
 // stealth altitude (>2 pips off the ground). White by default; red when
 // a radar currently has lock. Server packs this into STAT_HUD_DANGER:
-// 0=hidden, 1=white, 2=red.
+// 0=hidden, 1=white DANGER, 2=red DANGER, 3="HIDDEN" (safe inside a cloud).
 static void Hud_DrawDanger(vector virtsize)
 {
 	float st = getstatf(STAT_HUD_DANGER);
+	string label;
+	vector col;
+	vector sz = '14 14 0';
+	float w, x, y;
+
 	if (st < 1) return;
 
-	string label = "DANGER";
-	vector sz = '14 14 0';
-	float w = strlen(label) * sz_x;
-	float x = (virtsize_x - w) / 2;
-	float y = 56;
+	if (st >= 3)
+	{
+		// Effectively hidden inside a cloud — replace DANGER with a calm
+		// green HIDDEN badge.
+		label = "HIDDEN";
+		col = '0.3 1 0.4';
+	}
+	else
+	{
+		label = "DANGER";
+		if (st >= 2) col = '1 0.15 0.15';  // red — radar lock
+		else         col = '1 1 1';        // white — exposed but no lock
+	}
 
-	vector col;
-	if (st >= 2) col = '1 0.15 0.15';  // red — radar lock
-	else         col = '1 1 1';        // white — exposed but no lock
+	w = strlen(label) * sz_x;
+	x = (virtsize_x - w) / 2;
+	y = 56;
 
 	// 1px black drop shadow for legibility over any background.
 	drawstring([x + 1, y + 1, 0], label, sz, '0 0 0', 0.7, 0);
@@ -428,7 +503,9 @@ static void Hud_DrawDanger(vector virtsize)
 // separate, more urgent alert than the static DANGER label above.
 static void Hud_DrawRadar(vector virtsize)
 {
-	if (getstatf(STAT_HUD_DANGER) < 2) return;
+	// Exactly 2 (red DANGER + radar lock). st==3 is the cloud-HIDDEN state,
+	// which must NOT show the RADAR alert.
+	if (getstatf(STAT_HUD_DANGER) != 2) return;
 
 	string label = "RADAR";
 	vector sz = '14 14 0';
@@ -533,38 +610,70 @@ static float intro_fade_dir_time;    // time when current fade started
 // (índice < pax) salen en color, los huecos en gris pálido. Cada muñeco
 // son 3 columnas × 3 filas de caracteres ASCII:
 //
-//      o   ← cabeza
-//     /|\  ← brazos abiertos
-//     / \  ← piernas separadas
+//  o  ← cabeza
+//  |  ← cuerpo
+
 // ---------------------------------------------------------------------
 static void Hud_DrawPax(vector vsz, float pax_count, float pax_alpha)
 {
+	float cap;
+	float ch;
+	float fig_w;
+	float fig_gap;
+	float row_h;
+	float row_w;
+	float base_x;
+	float base_y;
+	float i;
+	float fx;
+	vector pcol;
+
 	if (pax_alpha <= 0)
 		return;
-	float cap = 8;
-	float ch = 8;
-	float fig_w = ch * 3;
-	float fig_gap = 4;
-	float row_h = ch;
-	float base_x = 6;
-	// Bottom row of figures sits a bit above the screen edge.
-	float base_y = vsz_y - row_h * 3 - 8;
 
-	float i;
+	cap = 8;
+	ch = 8;
+	fig_w = ch;          // 1 char wide per figure now (head 'o' over body '|')
+	fig_gap = 4;
+	row_h = ch;
+	row_w = cap * (fig_w + fig_gap);
+	// Bottom-left, just ABOVE the ammo bars + their "AMMO" caption, and to the
+	// RIGHT of the health bar (x=6, ~20u wide) so nothing overlaps. Each
+	// figure is 2 rows tall (head + body) plus the PAX caption.
+	base_x = 32;
+	base_y = vsz_y - row_h * 2 - 62 - MISSION_BAR_H;
+
+	// Small "PAX" caption above the row.
+	drawstring([base_x, base_y - 11, 0], "PAX", '8 8 0', '0.5 0.85 1', pax_alpha, 0);
+
 	for (i = 0; i < cap; i++)
 	{
-		float fx = base_x + i * (fig_w + fig_gap);
-		vector col;
+		fx = base_x + i * (fig_w + fig_gap);
 		if (i < pax_count)
-			col = '0.5 0.85 1';   // llenos — azul claro
+			pcol = '0.5 0.85 1';   // llenos — azul claro
 		else
-			col = '0.4 0.4 0.4';  // huecos — gris
-		// Cabeza centrada en la columna del medio (offset +ch para
-		// quedar en la columna central).
-		drawstring([fx + ch, base_y, 0],     "o",   '8 8 0', col, pax_alpha, 0);
-		drawstring([fx, base_y + row_h, 0],  "/|\\", '8 8 0', col, pax_alpha, 0);
-		drawstring([fx, base_y + row_h*2,0], "/ \\", '8 8 0', col, pax_alpha, 0);
+			pcol = '0.4 0.4 0.4';  // huecos — gris
+		drawstring([fx, base_y, 0],          "o", [ch, ch, 0], pcol, pax_alpha, 0);
+		drawstring([fx, base_y + row_h, 0],  "|", [ch, ch, 0], pcol, pax_alpha, 0);
 	}
+};
+
+// "DAY n" badge, top-left under the compass area. A small amber tag showing
+// which of the 5 days is in progress (STAT_HUD_DAY).
+static void Hud_DrawDay(vector virtsize)
+{
+	float dnum;
+	string txt;
+	float tw;
+
+	dnum = getstatf(STAT_HUD_DAY);
+	if (dnum < 1) return;
+
+	txt = strcat("DAY ", ftos(dnum));
+	tw = strlen(txt) * 12 + 12;
+	// Amber tag block + text, near the top-left corner.
+	drawfill([10, 30, 0], [tw, 20, 0], '0.55 0.4 0.05', 0.85, 0);
+	drawstring([16, 33, 0], txt, '12 12 0', '1 0.95 0.6', 1, 0);
 };
 
 // ---------------------------------------------------------------------
@@ -586,6 +695,8 @@ static void Hud_DrawNormal(vector virtsize)
 	Hud_DrawDanger(virtsize);
 	Hud_DrawRadar(virtsize);
 	Hud_DrawMission(virtsize);
+	Hud_DrawMissionBar(virtsize);
+	Hud_DrawDay(virtsize);
 
 	// Health bar (left edge, vertical) - only in vehicle.
 	if (health > 0 && wepmdl)
@@ -594,7 +705,7 @@ static void Hud_DrawNormal(vector virtsize)
 		float bar_h = 120;
 		float border = 2;
 		float bar_x = 6;
-		float bar_y = virtsize_y - bar_h - 6;
+		float bar_y = virtsize_y - bar_h - 6 - MISSION_BAR_H;
 		float frac = health / 100;
 		if (frac > 1) frac = 1;
 		float fill_h = bar_h * frac;
@@ -619,7 +730,7 @@ static void Hud_DrawNormal(vector virtsize)
 		float ammo_row_w = 300;
 		float ammo_h = 8;
 		float ammo_row_gap = 2;
-		float ammo_x = 100;
+		float ammo_x = 32;     // close to the health bar (which ends ~x=24)
 
 		float count = floor(ammo);
 		if (count < 1) count = 0;
@@ -638,7 +749,7 @@ static void Hud_DrawNormal(vector virtsize)
 		float num_rows = ceil(count / per_row);
 		if (num_rows < 1) num_rows = 1;
 
-		float ammo_y = virtsize_y - num_rows * (ammo_h + ammo_row_gap) - 6;
+		float ammo_y = virtsize_y - num_rows * (ammo_h + ammo_row_gap) - 6 - MISSION_BAR_H;
 
 		drawstring([ammo_x, ammo_y - 10, 0], strcat("AMMO ", ftos(floor(ammo))), '8 8 0', '1 1 0', 0.8, 0);
 
@@ -657,7 +768,7 @@ static void Hud_DrawNormal(vector virtsize)
 	if (wepmdl && wepid >= 0 && wepid < NUM_WEAPONS)
 	{
 		vector picsize = [66 * 2, 34 * 2, 0];
-		vector picpos = [virtsize_x - picsize_x - 6, virtsize_y - picsize_y - 6, 0];
+		vector picpos = [virtsize_x - picsize_x - 6, virtsize_y - picsize_y - 6 - MISSION_BAR_H, 0];
 		drawpic(picpos, wep_pics[wepid], picsize, '1 1 1', 0.9, 0);
 	}
 
@@ -666,7 +777,7 @@ static void Hud_DrawNormal(vector virtsize)
 	{
 		string mvtxt = "[ MISSILE VIEW ]";
 		float mvlen = strlen(mvtxt) * 8;
-		drawstring([virtsize_x / 2 - mvlen / 2, virtsize_y - 16, 0], mvtxt, '8 8 0', '1 0.3 0.3', 1, 0);
+		drawstring([virtsize_x / 2 - mvlen / 2, virtsize_y - 16 - MISSION_BAR_H, 0], mvtxt, '8 8 0', '1 0.3 0.3', 1, 0);
 	}
 
 	Hud_DrawStars(virtsize);
@@ -803,6 +914,10 @@ static void Hud_Draw(vector virtsize, float showscores)
 	//   5. Segunda mitad del fade (p >= 0.5): pintamos el nuevo HUD con
 	//      el negro reduciendo: fade-in del nuevo.
 	float target_phase = getstatf(STAT_HUD_INTRO);
+	// TEMP: 24h-news (BREAKING NEWS) overlay disabled. Force phase 0 so we
+	// always draw the normal HUD and never the newscast. Re-enable by
+	// removing this line.
+	target_phase = 0;
 	if (target_phase != intro_last_phase)
 	{
 		intro_fade_dir_time = time;

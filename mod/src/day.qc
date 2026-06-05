@@ -21,6 +21,18 @@ float g_day;
 float g_wave_left;
 // Spawned this day (server-side, for scaling and stats).
 float g_wave_spawned;
+// Day goal (global, NOT per-pickup): the player must DELIVER g_wave_quota
+// civilians to the ship this day. The cycle is pick up → fly to ship →
+// unload; only UNLOADING counts. Progress fields:
+//   g_wave_quota     : civilians to deliver this day (Day_WavePerPickup).
+//   g_wave_delivered : delivered to the ship so far (advances in ship_check).
+//   g_wave_left      : civilians still alive in the field NOT yet picked up
+//                      (waiting/running). Used to know whether to spawn more.
+//   g_wave_spawned   : total civilians created this day (so we don't create
+//                      more than the day can still use).
+// The day advances when g_wave_delivered >= g_wave_quota.
+float g_wave_quota;
+float g_wave_delivered;
 // Time of last day change; used by newscast / UI.
 float g_day_changed_at;
 
@@ -29,6 +41,10 @@ void(float day) Upgrades_OfferDay;
 
 // Forward decl (defined in objectives.qc).
 void() Objectives_RotateDay;
+// The currently-active pickup objective (defined in objectives.qc, which is
+// compiled after this file). Day_WaveCleared reads it to decide when the
+// active objective has produced its whole daily quota.
+entity g_objective_active;
 
 // Forward decl (defined in intro.qc).
 void() Intro_Begin;
@@ -44,86 +60,63 @@ void() Day_Init =
 	g_day = 1;
 	g_wave_left = 0;
 	g_wave_spawned = 0;
+	g_wave_quota = Day_WavePerPickup();   // civilians to DELIVER this day
+	g_wave_delivered = 0;
 	g_day_changed_at = time;
 	// Day 1 has no choice (player learns the verb).
 	// Days 2..5: the wave-clear hook will offer the choice.
 };
 
-// Called by objectives.qc when a civilian spawns.
+// Called when a civilian spawns waiting at a pickup.
 void() Day_OnCivilianSpawned =
 {
-	g_wave_left = (g_wave_left + 1);
+	g_wave_left = (g_wave_left + 1);   // alive in the field, not yet picked up
 	g_wave_spawned = (g_wave_spawned + 1);
 };
 
-// Called when a civilian is rescued or dies.
-void() Day_OnCivilianConsumed =
+// Called when a waiting/running civilian LEAVES the field — either boards the
+// heli (then it's the player's job to deliver it) or dies. Boarding does NOT
+// count toward the day quota; only delivering to the ship does.
+void() Day_OnCivilianPickedUp =
 {
 	g_wave_left = (g_wave_left - 1);
-	if ((g_wave_left < 0))
-	{
-		g_wave_left = 0;
-	}
+	if ((g_wave_left < 0)) { g_wave_left = 0; }
+};
+
+// Called when a waiting/running civilian is KILLED before pickup. It leaves
+// the field (g_wave_left--) and, since it was never delivered, we un-count it
+// from g_wave_spawned so the pickups create a replacement — otherwise a death
+// would make the deliver quota unreachable.
+void() Day_OnCivilianLost =
+{
+	g_wave_left = (g_wave_left - 1);
+	if ((g_wave_left < 0)) { g_wave_left = 0; }
+	g_wave_spawned = (g_wave_spawned - 1);
+	if ((g_wave_spawned < 0)) { g_wave_spawned = 0; }
+};
+
+// Called by ship_check when the heli unloads `n` passengers at the ship.
+// THIS is what advances the day quota.
+void(float n) Day_OnDelivered =
+{
+	g_wave_delivered = (g_wave_delivered + n);
 };
 
 // Returns TRUE when the wave is over.
 //
-// Una oleada está cerrada cuando:
-//   - Hay al menos un pickup en el mapa.
-//   - Todos los pickups han agotado su cuota del día (pickup_spawned_day
-//     >= pickup_quota_day).
-//   - No quedan civiles vivos pendientes de rescate / muerte
-//     (g_wave_left == 0).
-//
-// Mirar pickups en lugar de un contador global hace que mapas con N
-// info_pickup escalen su densidad de forma natural — más pickups, más
-// civiles que rescatar antes de cerrar el día.
+// The day is cleared when the player has DELIVERED the day's quota of
+// civilians to the ship (g_wave_delivered >= g_wave_quota). Picking civilians
+// up does not clear the day — they have to be unloaded at the ship. Day 5 has
+// quota 0 (representative-only) → clears at once.
 float() Day_WaveCleared =
 {
-	local entity p;
-	local float any_pickup;
-	local float any_quota_left;
-
-	if ((g_wave_left > 0))
+	if ((g_wave_quota <= 0))
 	{
-		return (FALSE);
+		return (TRUE);    // day 5 / nothing to deliver → done
 	}
-
-	// Recorre pickups y mira si alguno tiene cuota pendiente.
-	any_pickup = 0;
-	any_quota_left = 0;
-	p = find(world, classname, "info_pickup");
-	while (p)
+	if ((g_wave_delivered < g_wave_quota))
 	{
-		any_pickup = 1;
-		// pickup_quota_day se inicializa lazy en pickup_think. Si vale 0
-		// (nunca activado) usamos Day_WavePerPickup() como referencia.
-		if ((p.pickup_quota_day <= 0))
-		{
-			if ((Day_WavePerPickup() > 0))
-			{
-				any_quota_left = 1;
-			}
-		}
-		else
-		{
-			if ((p.pickup_spawned_day < p.pickup_quota_day))
-			{
-				any_quota_left = 1;
-			}
-		}
-		p = find(p, classname, "info_pickup");
-	}
-
-	if (!any_pickup)
-	{
-		// Mapa sin info_pickup: nunca se cierra la oleada. El día 1 se
-		// queda colgado y los warnings de objectives_init informan.
-		return (FALSE);
-	}
-	if (any_quota_left)
-	{
-		return (FALSE);
+		return (FALSE);   // not enough delivered yet
 	}
 	return (TRUE);
 };
@@ -274,6 +267,8 @@ void() Day_Advance =
 	g_day_changed_at = time;
 	g_wave_left = 0;
 	g_wave_spawned = 0;
+	g_wave_quota = Day_WavePerPickup();   // new day's deliver quota
+	g_wave_delivered = 0;
 
 	// Newscast del día: un único titular en el overlay del canal de
 	// noticias (sin consola). El texto vive en el HUD, seleccionado por

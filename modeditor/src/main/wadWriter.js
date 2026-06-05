@@ -441,7 +441,14 @@ async function ensureAutoWad(outPath) {
   const W = 64, H = 64;
 
   function solidEntry(name, r, g, b) {
-    const idx = nearestPaletteIndex(r, g, b);
+    return solidEntryIdx(name, nearestPaletteIndex(r, g, b));
+  }
+  // Same as solidEntry but takes an explicit palette index. Used where we
+  // need adjacent palette entries that nearestPaletteIndex would otherwise
+  // collapse onto one (e.g. the subtle water-depth shades — the Quake
+  // palette has few, widely-spaced blues, so a "soft" RGB gradient rounds to
+  // a single index; picking indices directly keeps the steps distinct).
+  function solidEntryIdx(name, idx) {
     const lump = buildSolidMiptex(name, W, H, idx);
     const rgb = QUAKE_PALETTE[idx];
     const rgba = new Uint8ClampedArray(W * H * 4);
@@ -464,6 +471,33 @@ async function ensureAutoWad(outPath) {
   });
   const sky    = solidEntry('sky_auto', 140, 180, 230);
   const water  = solidEntry('*water',   30,  80, 160);
+  // Four liquid water shades for coastal depth banding (mapWriter picks one
+  // per band by distance to the coast). '*' keeps them liquid (warp).
+  //
+  // IMPORTANT: Quake's water "turbulence" warps the texture's UVs — it only
+  // shows if the texture has an internal PATTERN. A flat colour warped is
+  // still flat (invisible oscillation). So each shade is a subtle NOISE
+  // pattern (not a solid fill): the noise gives the warp something to ripple.
+  // The noise also straddles a few adjacent palette blues, which is what
+  // makes the otherwise-collapsing subtle depth gradient actually read.
+  //
+  // baseLum sets the depth tone (shallow brighter → deep darker); the noise
+  // adds a small ± wobble in the blue channel. amp kept low so it stays a
+  // gentle shimmer, not a busy texture. Blues sit on Quake's blue ramp.
+  //   1 shallow/coast (lightest) → 4 deep/open sea.
+  function waterShade(name, baseB, ampB) {
+    return tintedEntry(name, v => {
+      const b = baseB + Math.round((v - 0.5) * 2 * ampB);   // wobble around base
+      // Quake's blue ramp is roughly (r=g≈ b*0.25..0.3). Keep r=g low so
+      // nearestPaletteIndex lands on the saturated blue entries (209..216).
+      const rg = Math.round(b * 0.22);
+      return [rg, rg, Math.max(120, Math.min(239, b))];
+    });
+  }
+  const water1 = waterShade('*water1', 160, 26);   // shallow — dominant idx 214
+  const water2 = waterShade('*water2', 180, 24);   // dominant idx 213
+  const water3 = waterShade('*water3', 200, 22);   // dominant idx 212
+  const water4 = waterShade('*water4', 222, 22);   // deep — dominant idx 211
   // Minimap "sea" — same hue as water but as a solid (non-liquid) texture
   // so it renders flat. Used by the under-bedrock minimap area instead
   // of *water (which would warp + render translucent).
@@ -675,7 +709,7 @@ async function ensureAutoWad(outPath) {
     portDock, portWall, portPier, portHaz, portBollard, portCrane,
     milGreen, milCamo, milTan, milSandbag, milBunker, milWire,
   ];
-  const all = [autoWall, sky, water, minimapSea, gren3a, wood, rock, wood18, metal, halfSide, skip, nullTex, lampFb, ...portMil];
+  const all = [autoWall, sky, water, water1, water2, water3, water4, minimapSea, gren3a, wood, rock, wood18, metal, halfSide, skip, nullTex, lampFb, ...portMil];
 
   await writeWad(outPath, all.map(e => ({ name: e.name, lump: e.lump })));
 

@@ -61,7 +61,7 @@ const FLATLUM = parseFloat(arg('flatlum', '214'));
 const BIN_DIR = path.join(__dirname, '..', 'bin');
 const TMP_DIR = path.join(__dirname, '..', 'tmp');
 const OUT_DIR = 'D:/quake/uplifter/maps';
-const BASE = 'b_cloud0';
+const BASE = arg('out', 'b_cloud0');   // output basename (b_cloud0..b_cloud4)
 
 function run(exe, args) {
   const r = spawnSync(path.join(BIN_DIR, exe), args, { cwd: TMP_DIR, encoding: 'utf8' });

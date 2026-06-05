@@ -18,23 +18,58 @@
 
 float PICKUP_CAPACITY        = 8;
 float PICKUP_ACTIVE_RADIUS   = 192;   // landing within this distance counts
-float PICKUP_SPAWN_RADIUS    = 96;    // civilians spawn within this ring
-float PICKUP_SPAWN_INTERVAL  = 1.5;   // seconds between civilian spawns
+float PICKUP_SPAWN_RADIUS    = 96;    // civilians wait scattered within this ring
 float SHIP_ACTIVE_RADIUS     = 256;
 float SHIP_DEPOSIT_CREDITS   = 250;   // credits per delivered passenger
 float CIV_WALK_SPEED         = 120;   // units/s
 float CIV_BOARD_DIST         = 96;    // generous board radius (heli is 32u wide)
+float CIV_BOARD_VERT         = 48;    // max heli-vs-civilian height gap to board
+                                      // (so a hovering heli can't be boarded)
 float CIV_THINK_INTERVAL     = 0.1;   // 10 Hz so velocity/yaw stay responsive
-float CIV_SPAWN_NEAR_HELI    = 160;   // spawn this far from heli on landing
+
+// Civilians now PRE-SPAWN at the active pickup and wait there. They jump in
+// place when the heli flies near, and run to it once it lands.
+float CIV_WAITING_MAX        = 8;     // max civilians waiting at once (= heli cap)
+float CIV_JUMP_RADIUS        = 600;   // heli within this (flying) → civilians jump
+float CIV_JUMP_VZ            = 130;   // upward velocity of an excited little hop
+float CIV_JUMP_INTERVAL      = 0.7;   // seconds between hops while excited
+float CIV_STAND_FRAME        = 17;    // player.mdl idle/stand frame
+float CIV_SPAWN_STAGGER      = 0.25;  // seconds between pre-spawned civilians
+float PICKUP_HANDOFF_QUIET   = 2.0;   // seconds the new pickup's smoke is hushed
+
+// Civilian behaviour state.
+float CIV_WAIT = 0;   // standing at the pickup, idle
+float CIV_JUMP = 1;   // hopping in place (heli flying near)
+float CIV_RUN  = 2;   // running toward a landed heli to board
 
 // Per-player passenger count.
 .float pax;
-// On the info_pickup entity: next time it spawns a civilian.
-.float next_civilian;
 // On the info_pickup entity: next time it spawns a marker puff.
 .float next_puff;
 // Marker on info_pickup: which player it's actively spawning for.
 .entity active_player;
+// On a civilian: behaviour state (CIV_WAIT/JUMP/RUN) and next hop time.
+.float civ_state;
+.float civ_next_hop;
+// On a civilian: the info_pickup it belongs to (so the pickup can track how
+// many are still waiting and top them back up as they board).
+.entity civ_pickup;
+// On the info_pickup: how many civilians it has currently waiting/alive.
+.float civ_alive;
+// On the info_pickup: next time it may spawn a waiting civilian (staggered
+// one-per-tick so they don't overlap each other's bbox on spawn).
+.float next_civilian;
+// On the info_pickup: while > time, the smoke beacon is temporarily
+// suppressed (right after waking this pickup via a handoff — a moment of
+// "this is the new spot" feedback).
+.float puff_suppress_until;
+// On the info_pickup: how many civilians it has SHOWN since it became active
+// (capped at CIV_WAITING_MAX). When it has shown its cap and none remain
+// waiting but the day still needs more, we wake a different pickup.
+.float civ_shown;
+// On the info_pickup: set once we've told the player to return to the ship
+// (no civilians left to pick up this day) so we don't nag every frame.
+.float civ_sent_home;
 
 // Globals (entity-attached on `world`).
 entity g_objective_active;
@@ -46,6 +81,14 @@ entity g_ship;
 void() monster_aag;
 void() monster_sam;
 void() monster_rad;
+
+// Forward decl: defined below; pickup_think calls it to hand off to a fresh
+// objective when its present batch is rescued but the day's quota remains.
+void() rotate_objective;
+// Forward decl: sets the persistent bottom mission line (defined below).
+void() Mission_SetLine;
+// Forward decl: one-shot "return to ship" announcement (defined below).
+void() Objective_AnnounceReturn;
 
 float PICKUP_PUFF_INTERVAL = 0.1;     // seconds between marker puffs
 float PICKUP_PUFF_FRAME_DT = 0.6;     // seconds per anim frame (puffs live longer)
@@ -125,70 +168,173 @@ void(vector where) pickup_spawn_puff =
 
 void() civilian_think;
 
+// When a civilian leaves play (boards, dies, or its pickup goes away) keep
+// the owning pickup's live-count straight so it can top the group back up.
+void() civilian_release =
+{
+	if ((self.civ_pickup != world) && (self.civ_pickup.civ_alive > 0))
+	{
+		self.civ_pickup.civ_alive = (self.civ_pickup.civ_alive - 1);
+	}
+};
+
 void() civilian_die =
 {
+	// A civilian killed before pickup leaves the field but was NEVER
+	// delivered, so it must be replaced or the deliver-quota could never be
+	// met. Day_OnCivilianLost frees its field slot AND lets the pickups
+	// create a replacement (it un-counts it from g_wave_spawned).
+	civilian_release();
+	Day_OnCivilianLost();
 	remove(self);
 };
 
+// Find the nearest player-piloted heli (returns world if none).
+entity() civ_find_heli =
+{
+	local entity client;
+	local entity heli;
+	local entity best;
+	local float bestd;
+	local float d;
+
+	best = world;
+	bestd = 0;
+	client = find(world, classname, "player");
+	while (client != world)
+	{
+		heli = client.enemy;
+		if ((heli != world) && (heli.owner == client) && (heli.health >= 1))
+		{
+			d = vlen((heli.origin - self.origin));
+			if ((best == world) || (d < bestd))
+			{
+				best = heli;
+				bestd = d;
+			}
+		}
+		client = find(client, classname, "player");
+	}
+	return (best);
+};
+
+// Per-tick civilian behaviour. State machine:
+//   RUN  — a player heli is landed within the pickup radius: run to it and
+//          board on contact.
+//   JUMP — a heli is flying within CIV_JUMP_RADIUS: hop in place to wave it
+//          down (a real little physics hop + jump frame).
+//   WAIT — otherwise: stand idle at the pickup.
 void() civilian_think =
 {
 	local vector dir;
 	local float dist;
 	local float yaw;
 	local entity heli;
+	local entity pk;
 
-	heli = self.goalentity;
-	if ((heli == world) || (heli.health < 1) || !heli.landed)
+	self.think = civilian_think;
+	self.nextthink = (time + CIV_THINK_INTERVAL);
+
+	// If our pickup is gone or no longer the active objective, disband. It was
+	// never delivered, so allow a replacement (Day_OnCivilianLost) and keep
+	// g_wave_left balanced.
+	pk = self.civ_pickup;
+	if ((pk == world) || (pk != g_objective_active))
 	{
-		self.think = civilian_die;
-		self.nextthink = (time + 0.1);
-		return;
-	}
-
-	dir = (heli.origin - self.origin);
-	dir_z = 0;
-	dist = vlen(dir);
-
-	if ((dist <= CIV_BOARD_DIST))
-	{
-		if ((heli.owner.pax < PICKUP_CAPACITY))
-		{
-			heli.owner.pax = (heli.owner.pax + 1);
-			sound(heli, CHAN_ITEM, "items/r_item1.wav", 1, ATTN_NORM);
-		}
+		civilian_release();
+		Day_OnCivilianLost();
 		remove(self);
 		return;
 	}
 
-	// MOVETYPE_STEP doesn't auto-step on terrain via velocity alone, so
-	// drive locomotion with walkmove(): it tries the move and slides over
-	// small obstacles like the engine handles for monsters.
-	yaw = vectoyaw(dir);
-	self.angles_y = yaw;
-	self.ideal_yaw = yaw;
-	walkmove(yaw, (CIV_WALK_SPEED * CIV_THINK_INTERVAL));
-
-	// Animate using player.mdl run cycle (frames 0..6).
-	self.walkframe = (self.walkframe + 1);
-	if ((self.walkframe > 6))
+	heli = civ_find_heli();
+	if (heli == world)
 	{
-		self.walkframe = 0;
+		self.civ_state = CIV_WAIT;
+		self.frame = CIV_STAND_FRAME;
+		return;
 	}
-	self.frame = self.walkframe;
 
-	self.think = civilian_think;
-	self.nextthink = (time + CIV_THINK_INTERVAL);
+	dist = vlen((heli.origin - self.origin));
+
+	// RUN: only when the heli is actually SET DOWN at this pickup — landed
+	// (touched the helipad) AND resting near ground level, not just hovering
+	// low. Run to it and board only on real ground contact.
+	if (heli.landed && (vlen((heli.origin - pk.origin)) <= PICKUP_ACTIVE_RADIUS))
+	{
+		self.civ_state = CIV_RUN;
+		dir = (heli.origin - self.origin);
+		dir_z = 0;
+
+		// Board only when close horizontally AND at a similar height (the
+		// heli is on the ground, the civilian walked up to it). A heli
+		// hovering well above the civilian can't be boarded.
+		if ((vlen(dir) <= CIV_BOARD_DIST) && (fabs(heli.origin_z - self.origin_z) <= CIV_BOARD_VERT))
+		{
+			if ((heli.owner.pax < PICKUP_CAPACITY))
+			{
+				heli.owner.pax = (heli.owner.pax + 1);
+				sound(heli, CHAN_ITEM, "items/r_item1.wav", 1, ATTN_NORM);
+			}
+			civilian_release();          // leaves the field (NOT delivered yet)
+			Day_OnCivilianPickedUp();    // delivery is what counts; see ship_check
+			remove(self);
+			return;
+		}
+
+		yaw = vectoyaw(dir);
+		self.angles_y = yaw;
+		self.ideal_yaw = yaw;
+		walkmove(yaw, (CIV_WALK_SPEED * CIV_THINK_INTERVAL));
+		self.walkframe = (self.walkframe + 1);
+		if ((self.walkframe > 6)) { self.walkframe = 0; }
+		self.frame = self.walkframe;   // run cycle (frames 0..6)
+		return;
+	}
+
+	// JUMP: heli flying near → hop in place to flag it down.
+	if (dist <= CIV_JUMP_RADIUS)
+	{
+		self.civ_state = CIV_JUMP;
+		// Face the heli while waving.
+		dir = (heli.origin - self.origin);
+		dir_z = 0;
+		self.angles_y = vectoyaw(dir);
+		// Real little hop when grounded, on a gentle cadence. player.mdl has
+		// no dedicated jump frame (41-49 are the axe-death anim), so the hop
+		// is sold by the physical vertical motion; keep an upright stand pose.
+		if ((self.flags & FL_ONGROUND) && (time >= self.civ_next_hop))
+		{
+			self.velocity_z = CIV_JUMP_VZ;
+			self.flags = (self.flags - (self.flags & FL_ONGROUND));
+			self.civ_next_hop = (time + CIV_JUMP_INTERVAL);
+		}
+		self.frame = CIV_STAND_FRAME;   // upright; the hop is the vertical motion
+		return;
+	}
+
+	// WAIT: idle at the pickup.
+	self.civ_state = CIV_WAIT;
+	self.frame = CIV_STAND_FRAME;
 };
 
-// Spawn a civilian at `org`, set to walk toward `heli` (which the player
-// is currently piloting). `org.z` is a hint height — we drop the civilian
-// down to the actual floor with droptofloor() (the engine's canonical way
-// to settle a stepping monster on terrain) and mark FL_ONGROUND so the
-// first walkmove() succeeds.
-void(vector org, entity heli) spawn_civilian =
+// Spawn one civilian WAITING at `org` (a spot at the pickup). `org.z` is a
+// hint height; `pk` is the owning info_pickup. The civilian stands idle
+// until a heli comes near.
+//
+// Grounding: the pickup (pk) has already snapped to the real ground in
+// info_pickup, so pk.origin_z IS the ground level. We trace straight down at
+// the civilian's XY (starting above the pickup's ground) to follow uneven
+// terrain, and put the civilian's feet there; if the trace misses (the ring
+// spot hangs over a ledge/water) we fall back to the pickup's ground Z. This
+// guarantees they rest on the ground — a floating civilian can't walk to the
+// heli, and droptofloor() is unreliable (256u reach, fails inside solid).
+void(vector org, entity pk) spawn_civilian =
 {
 	local entity c;
-	local vector start;
+	local vector top;
+	local vector bottom;
+	local float floorz;
 
 	c = spawn();
 	c.classname = "civilian";
@@ -198,31 +344,35 @@ void(vector org, entity heli) spawn_civilian =
 	setsize(c, '-12 -12 -24', '12 12 24');
 	Day_OnCivilianSpawned();
 
-	// Start a bit above the hint origin so droptofloor() has room to fall.
-	start = org;
-	start_z = (org_z + 64);
-	setorigin(c, start);
-
-	// Canonical walkmonster setup (see monsters.qc:walkmonster_start_go):
-	// nudge up 1u, droptofloor, then mark FL_MONSTER so walkmove()
-	// accepts this entity for locomotion. Without FL_MONSTER walkmove
-	// returns false and the civilian stays frozen in place.
+	top = org;       top_z    = (pk.origin_z + 64);
+	bottom = org;    bottom_z = (pk.origin_z - 512);
+	traceline(top, bottom, TRUE, c);
+	if ((trace_fraction < 1) && !trace_allsolid)
 	{
-		local entity oself;
-		oself = self;
-		self = c;
-		self.origin_z = self.origin_z + 1;
-		droptofloor();
-		self = oself;
+		floorz = trace_endpos_z;
 	}
+	else
+	{
+		floorz = pk.origin_z;   // fallback: pickup's own (settled) ground Z
+	}
+	// Feet sit at floorz; origin is centre, so add half-height (24) + 1u slack.
+	org_z = (floorz + 25);
+	setorigin(c, org);
+
 	c.flags = (c.flags | FL_MONSTER | FL_ONGROUND);
+	c.groundentity = trace_ent;
 
 	c.health = 25;
 	c.takedamage = DAMAGE_AIM;
 	c.th_die = civilian_die;
-	c.goalentity = heli;
+	c.civ_pickup = pk;
+	c.civ_state = CIV_WAIT;
+	c.frame = CIV_STAND_FRAME;
+	c.civ_next_hop = (time + random() * CIV_JUMP_INTERVAL);  // desync hops
 	c.think = civilian_think;
-	c.nextthink = (time + 0.1);
+	c.nextthink = (time + 0.1 + random() * 0.1);
+
+	pk.civ_alive = (pk.civ_alive + 1);
 };
 
 // ---------------------------------------------------------------------
@@ -233,12 +383,11 @@ void(vector org, entity heli) spawn_civilian =
 // objective, and spawn civilians when a player lands within range.
 void() pickup_think =
 {
-	local entity client;
-	local entity heli;
 	local vector spawnpos;
 	local vector puffpos;
 	local float ang;
 	local float rad;
+	local float want;
 
 	self.nextthink = (time + 0.1);
 	self.think = pickup_think;
@@ -250,7 +399,8 @@ void() pickup_think =
 
 	// Marker puffs: smoke beacon over the pickup. Spawns at random heights
 	// so the column looks volumetric instead of a single rising rope.
-	if ((time >= self.next_puff))
+	// Temporarily suppressed right after a fresh-objective handoff.
+	if ((time >= self.next_puff) && (time >= self.puff_suppress_until))
 	{
 		self.next_puff = (time + PICKUP_PUFF_INTERVAL);
 		ang = (random() * 360);
@@ -261,63 +411,77 @@ void() pickup_think =
 		pickup_spawn_puff(puffpos);
 	}
 
-	// Find a piloting player landed within range.
-	client = find(world, classname, "player");
-	while (client != world)
+	// The day's goal: DELIVER g_wave_quota civilians to the ship. Once enough
+	// have been created to cover the quota (and the rest are in transit), no
+	// pickup needs to spawn more. We create civilians until g_wave_spawned
+	// reaches the quota (deaths un-count via Day_OnCivilianLost so we top up).
+	if ((g_wave_spawned >= g_wave_quota))
 	{
-		heli = client.enemy;
-		if ((heli != world) && (heli.owner == client) && heli.landed)
+		// All the day's civilians exist (waiting, aboard, or delivered) — this
+		// pickup has nothing left to spawn.
+		want = 0;
+	}
+	else
+	{
+		want = (g_wave_quota - g_wave_spawned);
+	}
+
+	// Keep up to CIV_WAITING_MAX waiting at THIS pickup, never more than the
+	// day still needs to create. self.civ_shown caps how many one pickup
+	// shows so big quotas spread across several pickups.
+	if ((self.civ_alive < CIV_WAITING_MAX)
+		&& (self.civ_shown < CIV_WAITING_MAX)
+		&& (want > 0)
+		&& (time >= self.next_civilian))
+	{
+		self.next_civilian = (time + CIV_SPAWN_STAGGER);
+		ang = (random() * 360);
+		rad = (PICKUP_SPAWN_RADIUS * (0.4 + random() * 0.6));
+		makevectors(ang * '0 1 0');
+		spawnpos = self.origin + (v_forward * rad);
+		spawnpos_z = self.origin_z + 8;
+		spawn_civilian(spawnpos, self);
+		self.civ_shown = (self.civ_shown + 1);
+	}
+
+	// When this pickup has no one left waiting AND can't spawn more here
+	// (shown its cap, or all the day's civilians already exist), decide what
+	// the player should do next:
+	//   (A) the day still has civilians to CREATE elsewhere → wake the next
+	//       pickup and point the player there.
+	//   (B) every civilian for the day already exists (some aboard the heli,
+	//       some still to deliver) → there's nothing more to pick up, so send
+	//       the player HOME to the ship to unload.
+	// We only act once self.civ_alive hits 0 (the present group is cleared)
+	// and we've actually shown something here (civ_shown > 0), so this fires
+	// after the player empties a spot, not on the very first tick.
+	if ((self.civ_alive <= 0) && (self.civ_shown > 0)
+		&& ((self.civ_shown >= CIV_WAITING_MAX) || (g_wave_spawned >= g_wave_quota)))
+	{
+		if ((g_wave_spawned < g_wave_quota))
 		{
-			if ((vlen((heli.origin - self.origin)) <= PICKUP_ACTIVE_RADIUS))
+			// (A) More to create → next pickup.
+			rotate_objective();
+			if ((g_objective_active != world) && (g_objective_active != self))
 			{
-				break;
+				sound(g_objective_active, CHAN_VOICE, "misc/secret.wav", 1, ATTN_NONE);
+				g_objective_active.puff_suppress_until = (time + PICKUP_HANDOFF_QUIET);
+				self.civ_shown = 0;   // this spot is spent for now
 			}
 		}
-		client = find(client, classname, "player");
+		else
+		{
+			// (B) Everyone for the day exists; nothing left to pick up here.
+			// Tell the player to return to the ship to deliver. Stop puffing
+			// (this spot is empty) and only nag once.
+			self.puff_suppress_until = (time + 99999);
+			if (!self.civ_sent_home)
+			{
+				self.civ_sent_home = 1;
+				Objective_AnnounceReturn();
+			}
+		}
 	}
-
-	if ((client == world))
-	{
-		return;
-	}
-
-	if ((client.pax >= PICKUP_CAPACITY))
-	{
-		return;
-	}
-
-	// Inicializa la cuota del día para este pickup si aún no la tiene.
-	// pickup_quota_day se setea al valor de Day_WavePerPickup() la
-	// primera vez que el pickup se activa este día; se resetea al cambiar
-	// de día (Objectives_RotateDay).
-	if ((self.pickup_quota_day <= 0))
-	{
-		self.pickup_quota_day = Day_WavePerPickup();
-	}
-
-	if ((self.pickup_spawned_day >= self.pickup_quota_day))
-	{
-		// Ya completó su cuota para este día.
-		return;
-	}
-
-	if ((time < self.next_civilian))
-	{
-		return;
-	}
-	self.next_civilian = (time + PICKUP_SPAWN_INTERVAL);
-	self.pickup_spawned_day = (self.pickup_spawned_day + 1);
-
-	// Spawn the civilian close to the heli (not on the pickup ring) so
-	// the trip is short and predictable — they appear on a ring around
-	// the landed heli and run straight in.
-	ang = (random() * 360);
-	rad = CIV_SPAWN_NEAR_HELI;
-	makevectors(ang * '0 1 0');
-	spawnpos = heli.origin + (v_forward * rad);
-	// Hint Z; spawn_civilian traces down from this height to find ground.
-	spawnpos_z = heli.origin_z + 8;
-	spawn_civilian(spawnpos, heli);
 };
 
 void() info_pickup =
@@ -329,16 +493,26 @@ void() info_pickup =
 	precache_model("progs/puff_g4.spr");
 	precache_model("progs/puff_g5.spr");
 	precache_sound("items/r_item1.wav");
+	precache_sound("misc/secret.wav");   // happy chime on batch handoff
 
-	// Fall to the ground: the editor leaves the marker 64u above terrain;
-	// MOVETYPE_TOSS + a bbox lets the engine settle it on the surface so
-	// the puff column rises from ground level.
 	self.solid = SOLID_TRIGGER;
-	self.movetype = MOVETYPE_TOSS;
+	self.movetype = MOVETYPE_NONE;
 	setsize(self, '-8 -8 -8', '8 8 8');
 	self.classname = "info_pickup";
 	self.model = "";
 	setmodel(self, "");
+
+	// Settle on the real ground. The editor leaves the marker ~64u above the
+	// terrain, and a SOLID_TRIGGER does NOT fall with MOVETYPE_TOSS (triggers
+	// don't collide), so we must snap it down ourselves: trace from above the
+	// marker straight down and put it on whatever solid we hit. Civilians and
+	// the puff column then use this corrected origin_z as ground level.
+	traceline(self.origin + '0 0 64', self.origin - '0 0 2048', TRUE, self);
+	if ((trace_fraction < 1) && !trace_allsolid)
+	{
+		setorigin(self, trace_endpos);
+	}
+
 	self.think = pickup_think;
 	self.nextthink = (time + 1);
 };
@@ -349,6 +523,32 @@ void() info_pickup =
 
 void() rotate_objective;
 
+// TRUE when at least one piloting player should be heading to the ship to
+// deliver: they carry passengers AND there's nothing left to rescue right now
+// (everyone for the day is created/aboard) OR their heli is full. This is the
+// same "go home" condition the mission line / compass use, evaluated globally
+// so the ship can raise its smoke beacon.
+float() Deliver_IsActive =
+{
+	local entity client;
+	local float more_to_rescue;
+
+	more_to_rescue = 0;
+	if ((g_wave_left > 0)) { more_to_rescue = 1; }
+	if ((g_wave_spawned < g_wave_quota)) { more_to_rescue = 1; }
+
+	client = find(world, classname, "player");
+	while (client != world)
+	{
+		if ((client.pax >= PICKUP_CAPACITY) || (!more_to_rescue && (client.pax > 0)))
+		{
+			return (TRUE);
+		}
+		client = find(client, classname, "player");
+	}
+	return (FALSE);
+};
+
 // Touched by anything inside its radius — we react only to a landed heli
 // piloted by a player with at least 1 passenger.
 void() ship_check =
@@ -356,8 +556,28 @@ void() ship_check =
 	local entity client;
 	local entity heli;
 	local float earned;
+	local vector puffpos;
+	local float ang;
+	local float rad;
 
-	self.nextthink = (time + 0.25);
+	// Smoke beacon over the ship while DELIVER is active, same as the pickup
+	// marker so the player can spot where to drop the survivors off. Tick fast
+	// (0.1s) while puffing so the column is as dense as the pickup's; idle at
+	// 0.25s otherwise.
+	if (Deliver_IsActive())
+	{
+		self.nextthink = (time + PICKUP_PUFF_INTERVAL);
+		ang = (random() * 360);
+		rad = (random() * PICKUP_PUFF_RADIUS);
+		makevectors(ang * '0 1 0');
+		puffpos = self.origin + (v_forward * rad);
+		puffpos_z = self.origin_z + 16 + (random() * PICKUP_PUFF_Z_RANGE);
+		pickup_spawn_puff(puffpos);
+	}
+	else
+	{
+		self.nextthink = (time + 0.25);
+	}
 	self.think = ship_check;
 
 	client = find(world, classname, "player");
@@ -388,10 +608,15 @@ void() ship_check =
 						sprint(client, " pax (+$");
 						sprint(client, ftos(earned));
 						sprint(client, ")\n");
+						// THIS advances the day quota: passengers UNLOADED at
+						// the ship (picking up in the field does not count).
+						Day_OnDelivered(client.pax);
 						client.pax = 0;
 						client.stars = 0;
 						sound(heli, CHAN_ITEM, "items/r_item2.wav", 1, ATTN_NORM);
-						rotate_objective();
+						// Don't rotate the objective on deposit: handoff is
+						// driven in pickup_think; rotating here would abandon
+						// civilians still waiting.
 					}
 					else
 					{
@@ -424,45 +649,73 @@ void() info_ship =
 // Active-objective rotation
 // ---------------------------------------------------------------------
 
-// Count info_pickup entities, pick one different from the current active.
+// Pick a NEW active pickup, preferring one DIFFERENT from the current active
+// (so a batch handoff actually sends the player somewhere else). Falls back
+// to the current one only if it's the only pickup on the map.
 void() rotate_objective =
 {
 	local entity p;
+	local entity prev;
 	local entity pick;
 	local float n;
 	local float r;
 
-	// Count candidates.
+	prev = g_objective_active;
+
+	// Count candidates OTHER than the current active.
 	n = 0;
 	p = find(world, classname, "info_pickup");
 	while (p != world)
 	{
-		n = (n + 1);
+		if (p != prev)
+		{
+			n = (n + 1);
+		}
 		p = find(p, classname, "info_pickup");
 	}
+
 	if ((n <= 0))
 	{
+		// No alternative pickup. Keep the current one active if it exists.
+		if (prev != world)
+		{
+			g_objective_active = prev;
+			return;
+		}
 		g_objective_active = world;
 		return;
 	}
 
+	// Pick the r-th candidate among those != prev.
 	r = floor(random() * n);
-	if ((r >= n))
-	{
-		r = (n - 1);
-	}
+	if ((r >= n)) { r = (n - 1); }
+	pick = world;
 	p = find(world, classname, "info_pickup");
-	pick = p;
-	while ((r > 0) && (p != world))
+	while (p != world)
 	{
-		p = find(p, classname, "info_pickup");
-		if (p != world)
+		if (p != prev)
 		{
-			pick = p;
+			if ((r <= 0))
+			{
+				pick = p;
+				p = world;   // stop
+			}
+			else
+			{
+				r = (r - 1);
+				p = find(p, classname, "info_pickup");
+			}
 		}
-		r = (r - 1);
+		else
+		{
+			p = find(p, classname, "info_pickup");
+		}
 	}
+
 	g_objective_active = pick;
+	// Fresh activation: reset its shown-counter so it can show a new group.
+	pick.civ_shown = 0;
+	pick.next_civilian = 0;
 	bprint("new objective active\n");
 };
 
@@ -476,6 +729,8 @@ void() objectives_init =
 	local entity p;
 	local float n_pickup;
 	local float n_ship;
+
+	bprint("[uplifter] objectives v3: deliver-quota + grounded civilians\n");
 
 	n_pickup = 0;
 	p = find(world, classname, "info_pickup");
@@ -632,45 +887,39 @@ void() Objectives_HudTick =
 	target = world;
 	kind = -1;
 
-	if ((self.pax >= PICKUP_CAPACITY))
 	{
-		// Always switch to deliver mode when full, even if the map lacks
-		// info_ship. Use kind=2 ("no ship placed") as a distinct signal
-		// to the HUD so the player sees the change.
-		target = g_ship;
-		if (target != world)
-		{
-			kind = 1;
-		}
-		else
-		{
-			kind = 2;
-		}
-	}
-	else if (self.pax > 0)
-	{
-		if (g_objective_active != world)
-		{
-			target = g_objective_active;
-			kind = 0;
-		}
-		else
+		local float more_to_rescue;
+
+		// Civilians still to rescue this day: any alive in the field now, or
+		// still to be created. (Same rule as the bottom mission line.)
+		more_to_rescue = 0;
+		if ((g_wave_left > 0)) { more_to_rescue = 1; }
+		if ((g_wave_spawned < g_wave_quota)) { more_to_rescue = 1; }
+
+		// Full heli, or nothing left to rescue while carrying pax → DELIVER.
+		// Point at the ship so the compass guides the player home. This is
+		// what was missing: once you've grabbed everyone the arrow must flip
+		// to the ship instead of pointing at an empty pickup.
+		if ((self.pax >= PICKUP_CAPACITY) || (!more_to_rescue && (self.pax > 0)))
 		{
 			target = g_ship;
-			if (target != world)
-			{
-				kind = 1;
-			}
-			else
-			{
-				kind = 2;
-			}
+			if (target != world) { kind = 1; }   // DELIVER → ship
+			else                 { kind = 2; }   // pax but no ship placed
 		}
-	}
-	else if (g_objective_active != world)
-	{
-		target = g_objective_active;
-		kind = 0;
+		// Otherwise, if there are civilians to rescue, point at the pickup.
+		else if (more_to_rescue && (g_objective_active != world))
+		{
+			target = g_objective_active;
+			kind = 0;                              // PICKUP → active objective
+		}
+		// Carrying pax but (oddly) no active objective and not "done": still
+		// send them to the ship rather than show nothing.
+		else if (self.pax > 0)
+		{
+			target = g_ship;
+			if (target != world) { kind = 1; }
+			else                 { kind = 2; }
+		}
 	}
 
 	if (target == world)
@@ -714,21 +963,81 @@ void() Objectives_HudTick =
 	self.obj_dotfwd = (to * v_forward);
 	self.obj_dotrgt = (to * v_right);
 	self.obj_kind = kind;
+	Mission_SetLine();
+};
+
+// Set the persistent bottom mission line (STAT_HUD_MISSION) from the current
+// state. Codes: 0 none, 1 "fly to the marked pickup", 2 "pick up survivors",
+// 3 "RETURN — deliver survivors to the ship". The day is done once enough
+// have been DELIVERED, so the rule is:
+//   - more civilians left to rescue this day (waiting now, or still to
+//     create) → go pick them up (1 if none waiting yet at the active spot,
+//     2 once a group is present);
+//   - otherwise (everyone for the day is already aboard / delivered) and you
+//     still carry passengers → RETURN to the ship to deliver (3).
+void() Mission_SetLine =
+{
+	local float more_to_rescue;
+
+	// Mirror the current day number to the player for the CSQC "DAY n" badge.
+	self.hud_day = g_day;
+
+	// Civilians still in the field to rescue, or yet to be created this day.
+	more_to_rescue = 0;
+	if ((g_wave_left > 0)) { more_to_rescue = 1; }
+	if ((g_wave_spawned < g_wave_quota)) { more_to_rescue = 1; }
+
+	if (more_to_rescue)
+	{
+		if ((g_objective_active != world) && (g_objective_active.civ_alive > 0))
+		{
+			self.hud_mission = 2;   // a group is waiting at the active spot
+		}
+		else
+		{
+			self.hud_mission = 1;   // head to the marked pickup
+		}
+	}
+	else if ((self.pax > 0))
+	{
+		self.hud_mission = 3;       // nothing left to grab → deliver to ship
+	}
+	else
+	{
+		self.hud_mission = 0;       // day's deliveries done / nothing to do
+	}
+};
+
+// One-shot feedback when a pickup runs out of survivors and there are no more
+// to create this day: tell every piloting player to return to the ship.
+void() Objective_AnnounceReturn =
+{
+	local entity p;
+	p = find(world, classname, "player");
+	while (p != world)
+	{
+		centerprint(p, "All survivors aboard\nRETURN to the ship to deliver");
+		sound(p, CHAN_VOICE, "misc/secret.wav", 1, ATTN_NONE);
+		p = find(p, classname, "player");
+	}
 };
 
 // Called once per PlayerPreThink. Computes the DANGER banner state for
 // the CSQC HUD:
-//   0  → hidden  (target below stealth altitude, ≤128u above ground)
-//   1  → white   (above stealth altitude, no radar lock)
-//   2  → red     (above stealth altitude AND a radar has lock)
+//   1  → white    (above stealth altitude, no radar lock)
+//   2  → red      (above stealth altitude AND a radar has lock)
+//   3  → "HIDDEN" (safe: effectively hidden in a cloud, OR flying low in
+//                  sigilo — both stealth modes show the green HIDDEN badge)
 // Stealth altitude matches the rule in rad.qc (RadFindTarget + rad_stand):
 // 128u (≈2 pips at HEIGHT_UNIT=64) over the surface directly below.
 // We measure from the piloted vehicle if any, otherwise from the player.
+// Stealth (cloud hide or low flight) takes priority: the DANGER banner is
+// replaced by a "HIDDEN" badge regardless of radar lock.
 void() Stealth_HudTick =
 {
-	if ((Stars_AltOverGround() <= SIGILO_MAX_ALT))
+	if (Stars_CloudHidden() || (Stars_AltOverGround() <= SIGILO_MAX_ALT))
 	{
-		self.hud_danger = 0;
+		self.hud_danger = 3;     // HIDDEN — cloud or low-flight sigilo
 	}
 	else if ((self.radar_locked_until > time))
 	{
@@ -789,10 +1098,15 @@ void() hospital_check_and_release =
 						sprint(client, " pax (+$");
 						sprint(client, ftos(earned));
 						sprint(client, ")\n");
+						// THIS advances the day quota: passengers UNLOADED at
+						// the ship (picking up in the field does not count).
+						Day_OnDelivered(client.pax);
 						client.pax = 0;
 						client.stars = 0;
 						sound(heli, CHAN_ITEM, "items/r_item2.wav", 1, ATTN_NORM);
-						rotate_objective();
+						// Don't rotate the objective on deposit: handoff is
+						// driven in pickup_think; rotating here would abandon
+						// civilians still waiting.
 					}
 					else
 					{
@@ -1037,13 +1351,15 @@ void() Objectives_RotateDay =
 	local entity rep;
 	local entity p;
 
-	// Reset de la cuota diaria de cada pickup. Cada uno empezará el día
-	// nuevo con su propia cuenta y volverá a spawnear hasta Day_WavePerPickup.
+	// Reset per-pickup state for the new day. The day quota is global
+	// (g_wave_quota/g_wave_delivered, set in Day_Advance); pickups just show
+	// groups of civilians. Clear each one's counters.
 	p = find(world, classname, "info_pickup");
 	while (p)
 	{
-		p.pickup_spawned_day = 0;
-		p.pickup_quota_day = 0;   // será re-inicializada lazy en pickup_think
+		p.civ_alive = 0;            // waiting civilians from last day are gone
+		p.civ_shown = 0;
+		p.puff_suppress_until = 0;
 		p = find(p, classname, "info_pickup");
 	}
 

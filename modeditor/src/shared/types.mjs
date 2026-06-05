@@ -80,6 +80,23 @@ export const CLOUD_COUNT = 32;
 export const CLOUD_FIELD_HALF = 12000;
 /** Side (px) of the procedural cloud slice textures. Multiple of 8. */
 export const CLOUD_TEX_SIZE = 256;
+// Clustering: clouds are placed in tight clusters so several models overlap
+// and read as one big lumpy cumulus (not scattered evenly).
+export const CLOUD_CLUSTERS = 8;
+export const CLOUD_PER_CLUSTER_MIN = 11;
+export const CLOUD_PER_CLUSTER_MAX = 12;
+export const CLOUD_CLUSTER_RADIUS = 1170;
+// Min random distance between cluster centres (rejection sampling) so groups
+// don't bunch up — clear blue sky between cumulus clusters.
+export const CLOUD_CLUSTER_SEP_MIN = 2400;
+export const CLOUD_CLUSTER_SEP_MAX = 4200;
+// Second cloud layer at the SAME altitude: smaller clusters of just 2 clouds.
+export const CLOUD2_CLUSTERS = 10;
+export const CLOUD2_PER_CLUSTER_MIN = 2;
+export const CLOUD2_PER_CLUSTER_MAX = 2;
+export const CLOUD2_CLUSTER_RADIUS = 500;
+export const CLOUD2_CLUSTER_SEP_MIN = 1800;
+export const CLOUD2_CLUSTER_SEP_MAX = 3200;
 
 export const DEFAULT_SUN = {
   intensity: 250,
@@ -95,6 +112,8 @@ export const DEFAULT_SUN = {
 
 export const SKY_TEXTURE = 'sky_auto';
 export const WATER_TEXTURE = '*water';
+// Coastal depth banding: light/shallow near coast (0) → dark/deep (3).
+export const WATER_SHADES = ['*water1', '*water2', '*water3', '*water4'];
 // The bedrock slab sits under the global water brush and is never
 // seen, but qbsp still wants a real texture on its faces. Point to
 // auto_wall — a rocky procedural texture that always exists in

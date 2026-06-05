@@ -160,8 +160,12 @@ function sha256Hex(str) {
  *    8 → mips re-ditherados (borde suave a distancia) + feather ancho.
  *    9 → nubes volumétricas reales (volumen 3D cortado en capas-textura).
  *   10 → nubes pregeneradas offline (clouds.wad + prefabs), corte en 3 ejes.
- *   11 → nubes como entidades `cloud` (modelo sólido b_cloud0.bsp, no-sólido). */
-const GEOM_WRITER_VERSION = 11;
+ *   11 → nubes como entidades `cloud` (modelo sólido b_cloud0.bsp, no-sólido).
+ *   12 → agua en bandas de profundidad costera (4 tonos *water1..4 por
+ *        distancia a la costa) en vez de un único brush '*water' global.
+ *   13 → tonos de agua con patrón de ruido (antes color plano): el warp de
+ *        Quake ondula las UV, que sobre un color plano no se ve. */
+const GEOM_WRITER_VERSION = 13;
 
 /** Hash de TODO lo que afecta a la geometria/BSP/iluminacion del .bsp.
  *  Si este hash cambia, hay que recompilar completo (qbsp + light). */
@@ -293,6 +297,33 @@ async function refreshAutoWads(send) {
     console.error('[textures.wad]', err);
     if (send) send({ stream: 'meta', tool: 'textures.wad', line: `ERROR: ${err.message}` });
   }
+}
+
+// Path to the mod's build.bat (repo-root/mod/build.bat). __dirname is
+// .../modeditor/src/main, so go up three levels to the repo root.
+const BUILD_BAT = path.join(__dirname, '..', '..', '..', 'mod', 'build.bat');
+
+// Compile the QuakeC (SSQC progs.dat + CSQC csprogs.dat) by running the mod's
+// build.bat. build.bat compiles with fteqcc and COPIES both .dat into the
+// install dir (D:\quake\uplifter). Resolves { ok, log } or { ok:false, error }.
+function compileProgs() {
+  return new Promise((resolve) => {
+    fs.stat(BUILD_BAT).then(() => {
+      // cmd /c so the .bat runs; cwd at the mod dir so fteqcc writes the .dat
+      // there (build.bat also pushd's, but set cwd too for belt-and-braces).
+      const child = spawn('cmd.exe', ['/c', BUILD_BAT, 'compile'], {
+        cwd: path.dirname(BUILD_BAT), windowsHide: true, shell: false,
+      });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d.toString(); });
+      child.stderr.on('data', (d) => { out += d.toString(); });
+      child.on('error', (err) => resolve({ ok: false, error: err.message }));
+      child.on('close', (code) => {
+        if (code === 0) resolve({ ok: true, log: out });
+        else resolve({ ok: false, error: `build.bat exited ${code}\n${out.split(/\r?\n/).slice(-12).join('\n')}` });
+      });
+    }).catch(() => resolve({ ok: false, error: `build.bat not found at ${BUILD_BAT}` }));
+  });
 }
 
 function registerIpc(getWindow) {
@@ -487,6 +518,17 @@ function registerIpc(getWindow) {
 
   ipcMain.handle('quake:launch', async (_evt, { map = 'uplifter', game = 'uplifter', cwd = 'd:\\quake', debug = false } = {}) => {
     try {
+      // Recompile the QuakeC (progs.dat + csprogs.dat) right before launching,
+      // so launching from the editor always runs the latest gameplay code.
+      // Without this the editor only rebuilds the map .bsp and the game would
+      // load whatever stale progs.dat happened to be deployed — the classic
+      // "I changed the QC but the game looks identical" trap. build.bat copies
+      // both .dat into the install dir.
+      const qc = await compileProgs();
+      if (!qc.ok) {
+        return { ok: false, error: `QuakeC compile failed: ${qc.error}` };
+      }
+
       // Lanzamos por defecto debug_iw.exe (Ironwail patcheado con el comando
       // 'debug_point'). En consola del juego con debug_point se hace un
       // traceline 4000u hacia delante y se escribe debug.txt con la textura
@@ -503,7 +545,7 @@ function registerIpc(getWindow) {
       });
       child.on('error', (err) => console.error('[quake:launch]', err));
       child.unref();
-      return { ok: true, pid: child.pid, cmd: `${exePath} ${args.join(' ')}` };
+      return { ok: true, pid: child.pid, cmd: `${exePath} ${args.join(' ')}`, qc: qc.log };
     } catch (err) {
       return { ok: false, error: err.message };
     }

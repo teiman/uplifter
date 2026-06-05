@@ -142,6 +142,8 @@ void() worldspawn =
 	clientstat(STAT_HUD_OBJ_DOTRGT, EV_FLOAT, obj_dotrgt);
 	clientstat(STAT_HUD_OBJKIND,    EV_FLOAT, obj_kind);
 	clientstat(STAT_HUD_DANGER,     EV_FLOAT, hud_danger);
+	clientstat(STAT_HUD_MISSION,    EV_FLOAT, hud_mission);
+	clientstat(STAT_HUD_DAY,        EV_FLOAT, hud_day);
 	clientstat(STAT_HUD_UPGRADES,   EV_FLOAT, upgrades);
 	clientstat(STAT_HUD_INTRO,      EV_FLOAT, hud_intro);
 	if ((self.model == "maps/e1m8.bsp"))
@@ -259,7 +261,11 @@ void() worldspawn =
 	precache_model2("progs/p8head.mdl");
 	precache_model2("progs/fx_void.mdl");
 	precache_model2("progs/obus.mdl");
-	precache_model("maps/b_cloud0.bsp");   // solid cloud volume (see entidad cloud)
+	precache_model("maps/b_cloud0.bsp");   // 5 cloud volumes (entidad cloud picks one at random)
+	precache_model("maps/b_cloud1.bsp");
+	precache_model("maps/b_cloud2.bsp");
+	precache_model("maps/b_cloud3.bsp");
+	precache_model("maps/b_cloud4.bsp");
 	precache_sound2("claw.wav");
 	precache_sound2("engines/engine.wav");
 	precache_sound2("thump.wav");

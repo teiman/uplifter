@@ -88,6 +88,29 @@ const CLOUD_VOLUME_COUNT = 6;
 const CLOUD_COUNT = 32;
 const CLOUD_FIELD_HALF = 12000;
 const CLOUD_TEX_SIZE = 256;
+// Clustering: clouds aren't scattered evenly — they're placed in tight
+// clusters so several models overlap and read as one big lumpy cumulus.
+const CLOUD_CLUSTERS = 8;            // number of cloud clusters in the sky
+const CLOUD_PER_CLUSTER_MIN = 11;    // clouds per cluster (random in [min,max])
+const CLOUD_PER_CLUSTER_MAX = 12;
+const CLOUD_CLUSTER_RADIUS = 1170;   // XY spread of clouds within a cluster (units).
+                                     // > a model's width (~880u) so cluster
+                                     // members touch at the edges and read as a
+                                     // group, instead of stacking into one dense blob.
+// Keep cluster CENTRES apart: each new centre is placed at least a random
+// distance in [MIN,MAX] from every already-placed centre (rejection sampling),
+// so clusters don't bunch up — gives clear blue sky between cumulus groups.
+const CLOUD_CLUSTER_SEP_MIN = 2400;
+const CLOUD_CLUSTER_SEP_MAX = 4200;
+
+// Second cloud layer at the SAME altitude: smaller clusters of just 2 clouds,
+// interspersed with the big ones to fill the gaps with little cumulus pairs.
+const CLOUD2_CLUSTERS = 10;          // number of small (2-cloud) clusters
+const CLOUD2_PER_CLUSTER_MIN = 2;
+const CLOUD2_PER_CLUSTER_MAX = 2;
+const CLOUD2_CLUSTER_RADIUS = 500;   // tight: the 2 clouds clearly overlap into one puff
+const CLOUD2_CLUSTER_SEP_MIN = 1800;
+const CLOUD2_CLUSTER_SEP_MAX = 3200;
 
 /** Default sun (sunlight in worldspawn). Tweakable from the Light panel. */
 const DEFAULT_SUN = {
@@ -105,6 +128,10 @@ const DEFAULT_SUN = {
  *  in the palette. */
 const SKY_TEXTURE = 'sky_auto';
 const WATER_TEXTURE = '*water';
+// Coastal depth banding: four liquid shades, light/shallow near the coast
+// (index 0) → dark/deep out to sea (index 3). mapWriter picks one per band
+// by distance to the nearest land cell. Defined in auto.wad (wadWriter).
+const WATER_SHADES = ['*water1', '*water2', '*water3', '*water4'];
 // The bedrock slab is hidden under the water brush; auto_wall always
 // exists in auto.wad so the writer can rely on it without the user
 // shipping a 'dirt' texture themselves.
@@ -459,9 +486,22 @@ module.exports = {
   CLOUD_COUNT,
   CLOUD_FIELD_HALF,
   CLOUD_TEX_SIZE,
+  CLOUD_CLUSTERS,
+  CLOUD_PER_CLUSTER_MIN,
+  CLOUD_PER_CLUSTER_MAX,
+  CLOUD_CLUSTER_RADIUS,
+  CLOUD_CLUSTER_SEP_MIN,
+  CLOUD_CLUSTER_SEP_MAX,
+  CLOUD2_CLUSTERS,
+  CLOUD2_PER_CLUSTER_MIN,
+  CLOUD2_PER_CLUSTER_MAX,
+  CLOUD2_CLUSTER_RADIUS,
+  CLOUD2_CLUSTER_SEP_MIN,
+  CLOUD2_CLUSTER_SEP_MAX,
   DEFAULT_SUN,
   SKY_TEXTURE,
   WATER_TEXTURE,
+  WATER_SHADES,
   BEDROCK_TEXTURE,
   MINIMAP_SEA_TEXTURE,
   MINIMAP_GAP,
