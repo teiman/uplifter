@@ -641,6 +641,16 @@ void() PlayerDie =
 {
 	local float i;
 
+	// Crashing / being shot down loses every passenger aboard: they were
+	// picked up but never delivered, so hand them back to the wave so the
+	// pickups respawn them — the player has to go fetch more. (Covers all
+	// death causes, not just collisions.)
+	if ((self.pax > 0))
+	{
+		Day_OnPassengersLost(self.pax);
+		self.pax = 0;
+	}
+
 	GibPlayer();
 	return;
 	if ((self.model == "progs/null.spr"))

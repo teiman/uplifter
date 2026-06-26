@@ -47,11 +47,26 @@ void() sam_run = [ 0, sam_run ]
 
 void() sam_death =
 {
-	self.trigger_field.think = BecomeExplosion;
-	self.trigger_field.nextthink = (time + 0.1);
+	// The SAM is two parts: self = base (samba.mdl), self.trigger_field =
+	// the spinning turret head (samtb.mdl). On death we blow up the TURRET
+	// HEAD (it becomes an explosion and vanishes) and leave the BASE behind
+	// as inert wreckage — the destroyed launcher pedestal stays on the
+	// ground instead of the head.
+	if (self.trigger_field != world)
+	{
+		self.trigger_field.think = BecomeExplosion;
+		self.trigger_field.nextthink = (time + 0.1);
+	}
 	if (!deathmatch)
 	{
-		remove(self);
+		// Leave the base as a dead, non-interactive prop: stop thinking,
+		// no damage, no AI. Keep its model (samba.mdl) visible on the floor.
+		self.solid = SOLID_NOT;
+		self.takedamage = 0;
+		self.th_die = SUB_Null;
+		self.enemy = world;
+		self.think = SUB_Null;
+		self.nextthink = -1;
 	}
 	else
 	{

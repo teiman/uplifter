@@ -28,6 +28,8 @@ import {
   pasteAt,
   runCityGenerator,
   runMilitaryGenerator,
+  runContainerShipGenerator,
+  runWarshipGenerator,
   undoGenerator,
   setPlayArea,
   clearPlayArea,
@@ -461,7 +463,33 @@ export function Canvas2D() {
           const code = t.decorations[i];
           if (code) {
             const deco = decodeDeco(code);
-            if (deco) {
+            if (deco && deco.kind === 'wedge') {
+              // Bevel del casco: en vez de texto, dibujamos la FORMA del
+              // chaflan vista desde arriba — un cuadrado al que le falta la
+              // esquina cortada (dir 0=NE 1=SE 2=SO 3=NO). El borde dibujado
+              // en planta = el aspecto real del bevel en el .map.
+              const m = 2;
+              const a = sx + m, b = sy + m;          // esquina sup-izq (canvas)
+              const c = sx + tile - m, d = sy + tile - m;  // inf-der (canvas)
+              // En canvas, +y es hacia ABAJO; en mundo +Y(norte) es hacia
+              // ARRIBA. Mapeamos las 4 esquinas de mundo a px de canvas:
+              //   NO=(a,b)  NE=(c,b)  SE=(c,d)  SO=(a,d)
+              const NO = [a, b], NE = [c, b], SE = [c, d], SO = [a, d];
+              // Pentagono = las 3 esquinas conservadas (la cortada se omite,
+              // dejando la diagonal entre sus dos vecinas).
+              const keep = ({
+                0: [NO, SE, SO],   // corta NE → quedan NO,SE,SO
+                1: [NO, NE, SO],   // corta SE → NO,NE,SO
+                2: [NO, NE, SE],   // corta SO → NO,NE,SE
+                3: [NE, SE, SO],   // corta NO → NE,SE,SO
+              })[deco.dir] || [NO, NE, SE, SO];
+              ctx.fillStyle = 'rgba(240, 200, 80, 0.55)';
+              ctx.beginPath();
+              ctx.moveTo(keep[0][0], keep[0][1]);
+              for (let p = 1; p < keep.length; p++) ctx.lineTo(keep[p][0], keep[p][1]);
+              ctx.closePath();
+              ctx.fill();
+            } else if (deco) {
               ctx.fillStyle = 'rgba(240, 200, 80, 0.55)';
               ctx.fillRect(sx + 2, sy + 2, tile - 4, tile - 4);
               if (tile >= 24) {
@@ -900,6 +928,18 @@ export function Canvas2D() {
       endStroke();
       return;
     }
+    if (getMode() === 'gen' && getTool() === 'ship_container') {
+      const { col, row } = cellFromEvent(e);
+      runContainerShipGenerator(col, row);
+      endStroke();
+      return;
+    }
+    if (getMode() === 'gen' && getTool() === 'ship_warship') {
+      const { col, row } = cellFromEvent(e);
+      runWarshipGenerator(col, row);
+      endStroke();
+      return;
+    }
     if (getTool() === 'rect' || getTool() === 'erosion'
         || (getMode() === 'height' && getTool() === 'smooth')
         || (getMode() === 'height' && getTool() === 'cap')
@@ -1203,9 +1243,9 @@ export function Canvas2D() {
           undoPatrol();
           return;
         }
-        if (m === 'gen') {
-          // Undo the last generator run (city or military). No-op when
-          // the stack is empty.
+        if (m === 'gen' || m === 'paint') {
+          // Undo the last generator run (city/military) OR bucket-fill. Both
+          // push onto the same generator-undo stack. No-op when empty.
           e.preventDefault();
           undoGenerator();
           return;

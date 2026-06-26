@@ -153,6 +153,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;   /* ancla para overlays absolutos (p.ej. forma del bevel) */
 }
 .palette-swatch .swatch-glyph {
   font-size: 26px;

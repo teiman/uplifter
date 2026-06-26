@@ -16,6 +16,15 @@ contextBridge.exposeInMainWorld('modeditor', {
     exportMap:  (payload) => ipcRenderer.invoke('tilemap:exportMap', payload ?? {}),
   },
 
+  // Reusable map-area props (.tprop): save a copied selection, list saved
+  // ones, and load one back to paste.
+  prop: {
+    save: (payload) => ipcRenderer.invoke('prop:save', payload ?? {}),
+    list: () => ipcRenderer.invoke('prop:list'),
+    load: (payload) => ipcRenderer.invoke('prop:load', payload ?? {}),
+    delete: (payload) => ipcRenderer.invoke('prop:delete', payload ?? {}),
+  },
+
   compile: {
     run: (payload) => ipcRenderer.invoke('compile:run', payload ?? {}),
     onLog: (handler) => {

@@ -1,5 +1,7 @@
 // AirQuake 2026 - CSQC HUD
 
+#define M_PI 3.14159265
+
 #define NUM_WEAPONS 14
 #define STAT_HUD_WEP 33
 #define STAT_HUD_YAW 34
@@ -21,6 +23,20 @@
 #define STAT_HUD_DAY        47
 #define STAT_HUD_INTRO      50
 #define STAT_HUD_MISSION    51
+#define STAT_HUD_QUOTA      52
+#define STAT_HUD_AMMO2      53  // hellfire count (helo)
+#define STAT_HUD_AMMO3      54  // flare count (helo)
+#define STAT_HUD_OBJ_BEARING 55 // world yaw toward active objective (compass)
+#define STAT_HUD_SUN_FWD    56  // sun dir · view forward (lens flare)
+#define STAT_HUD_SUN_RT     57  // sun dir · view right
+#define STAT_HUD_SUN_UP     58  // sun dir · view up
+#define STAT_HUD_SUN_VIS    59  // 1 = sun in front & unoccluded by solid
+#define STAT_HUD_SAVED      60  // civilians rescued (death summary)
+#define STAT_HUD_DISTANCE   61  // distance travelled in units (death summary)
+#define STAT_HUD_HELIS      62  // helicopters/lives remaining
+#define STAT_HUD_DEAD       63  // 1 while the player is dead → show summary
+#define STAT_HUD_SHOTS      64  // total attack actions this run
+#define STAT_HUD_GAMEWON    65  // 1 when representative delivered → show win screen
 
 // Height of the bottom mission strip. The rest of the bottom HUD is raised by
 // this much so nothing overlaps it. Keep in sync with Hud_DrawMissionBar's
@@ -118,6 +134,42 @@ static void Hud_DrawCompass(vector virtsize)
 	string hdg = ftos(floor(yaw));
 	float hlen = strlen(hdg);
 	drawstring([cx - hlen * 4, cy + 12, 0], hdg, '8 8 0', '0.7 0.9 1', 0.8, 0);
+
+	// ---- Active-objective marker ----
+	// When there's a known objective (OBJKIND >= 0), draw a coloured marker
+	// on the compass at the objective's world bearing. Colour by kind:
+	// pickup = green, deliver/ship = blue. If the bearing is outside the
+	// visible strip, pin the marker to the near edge as an arrow pointing the
+	// way to turn, so it's always on screen.
+	float okind = getstatf(STAT_HUD_OBJKIND);
+	if (okind >= 0)
+	{
+		float obearing = getstatf(STAT_HUD_OBJ_BEARING);
+		float odiff = obearing - yaw;
+		if (odiff > 180) odiff = odiff - 360;
+		if (odiff < -180) odiff = odiff + 360;
+		float opx = cx + (odiff * spacing / 45);
+
+		vector ocol = (okind == 0) ? '0.3 1 0.45' : '0.4 0.7 1';  // green / blue
+		float edge = strip_half - 6;
+		float onscreen = (opx > (cx - edge)) && (opx < (cx + edge));
+		if (!onscreen)
+		{
+			// Pin to the edge in the direction of the target.
+			opx = (odiff > 0) ? (cx + edge) : (cx - edge);
+		}
+
+		// Downward chevron sitting just under the strip, pointing at the spot.
+		float my = cy + 11;
+		drawfill([opx - 1, my - 3, 0], [3, 6, 0], '0 0 0', 0.7, 0);   // shadow
+		drawfill([opx - 1, my - 4, 0], [3, 6, 0], ocol, 1, 0);        // marker
+		if (!onscreen)
+		{
+			// Little arrowhead toward the edge so it reads as "turn this way".
+			float dir = (odiff > 0) ? 1 : -1;
+			drawfill([opx + dir * 3, my - 2, 0], [3, 2, 0], ocol, 1, 0);
+		}
+	}
 };
 
 // Vehicle selection screen
@@ -185,118 +237,19 @@ static float Hud_GroupForStyle(float vstyle)
 	return -1;
 };
 
+// Pantalla de muerte: ya no hay seleccion de vehiculo. El respawn se hace
+// con un click (anti-bogostick en el servidor: si el boton ya estaba pulsado
+// al morir, hay que soltarlo y volver a hacer click). Solo dibujamos el
+// mensaje "CLICK TO RESPAWN" centrado, con un parpadeo suave. El parametro
+// vstyle se mantiene en la firma por compatibilidad con el llamador aunque
+// ya no se use.
 static void Hud_DrawVehicleSelect(vector virtsize, float vstyle, float alpha)
 {
-	float grp = Hud_GroupForStyle(vstyle);
-	if (grp < 0)
-		return;
-
-	float count = grp_count[grp];
-	float base = grp * 3;
-
-	// Group title
-	string title = strcat(grp_names[grp], " [", grp_keys[grp], "]");
-	float tlen = strlen(title);
-	float title_y = virtsize_y / 2 - 100;
-	drawstring([(virtsize_x - tlen * 10) / 2, title_y, 0],
-		title, '10 10 0', '1 1 1', alpha, 0);
-
-	// Vehicle thumbnails in a horizontal row
-	float thumb_sz = 64;
-	float sel_sz = 96;
-	float gap = 20;
-
-	// Calculate total row width
-	float row_w = 0;
-	float i;
-	for (i = 0; i < count; i++)
-	{
-		float s = grp_members[base + i];
-		if (s == vstyle)
-			row_w = row_w + sel_sz;
-		else
-			row_w = row_w + thumb_sz;
-		if (i < count - 1)
-			row_w = row_w + gap;
-	}
-
-	float cx = (virtsize_x - row_w) / 2;
-	float thumb_y = title_y + 28;
-
-	for (i = 0; i < count; i++)
-	{
-		float s = grp_members[base + i];
-		float idx = s - 1;
-		float is_sel = (s == vstyle);
-		float sz;
-		float y_off;
-		vector color;
-		float a;
-
-		if (is_sel)
-		{
-			sz = sel_sz;
-			y_off = 0;
-			color = '1 1 1';
-			a = alpha;
-		}
-		else
-		{
-			sz = thumb_sz;
-			y_off = (sel_sz - thumb_sz) / 2;
-			color = '0.5 0.5 0.5';
-			a = alpha * 0.5;
-		}
-
-		// Selection border
-		if (is_sel)
-			drawfill([cx - 2, thumb_y + y_off - 2, 0], [sz + 4, sz + 4, 0],
-				'1 1 0', alpha * 0.4, 0);
-
-		// Vehicle image
-		if (idx >= 0 && idx < NUM_VEHICLES)
-			drawpic([cx, thumb_y + y_off, 0], veh_pics[idx],
-				[sz, sz, 0], color, a, 0);
-
-		// Small name label under thumbnail
-		if (idx >= 0 && idx < NUM_VEHICLES)
-		{
-			float nlen = strlen(veh_names[idx]);
-			float lsz = 6;
-			drawstring([cx + (sz - nlen * lsz) / 2, thumb_y + sel_sz + 6, 0],
-				veh_names[idx], [lsz, lsz, 0], color, a, 0);
-		}
-
-		cx = cx + sz + gap;
-	}
-
-	// Selected vehicle name (larger)
-	float sel_idx = vstyle - 1;
-	float name_y = thumb_y + sel_sz + 22;
-	if (sel_idx >= 0 && sel_idx < NUM_VEHICLES)
-	{
-		float snlen = strlen(veh_names[sel_idx]);
-		drawstring([(virtsize_x - snlen * 12) / 2, name_y, 0],
-			veh_names[sel_idx], '12 12 0', '1 1 1', alpha, 0);
-	}
-
-	// Cycle hint
-	if (count > 1)
-	{
-		string chint = strcat("Press ", grp_keys[grp], " again to cycle");
-		float chlen = strlen(chint);
-		drawstring([(virtsize_x - chlen * 8) / 2, name_y + 18, 0],
-			chint, '8 8 0', '0.7 0.7 0.7', alpha * 0.8, 0);
-	}
-
-	// Fire hint
-	string hint = "Press FIRE to start";
+	string hint = "CLICK TO RESPAWN";
 	float hlen = strlen(hint);
-	float hint_y = name_y + 18;
-	if (count > 1)
-		hint_y = hint_y + 14;
-	drawstring([(virtsize_x - hlen * 8) / 2, hint_y, 0],
-		hint, '8 8 0', '0.7 0.7 0.7', alpha * 0.8, 0);
+	drawstring([(virtsize_x - hlen * 14) / 2, virtsize_y / 2 - 8, 0],
+		hint, '14 14 0', '1 1 0.6',
+		alpha * (0.65 + 0.35 * sin(time * 5)), 0);
 };
 
 static void Hud_DrawControls(vector virtsize, float vtype)
@@ -429,7 +382,19 @@ static void Hud_DrawMissionBar(vector virtsize)
 	sw = virtsize_x;
 	sh = virtsize_y;
 
-	if (code == 3)
+	if (code == 5)
+	{
+		label = " EVAC ";
+		text  = "Fly the representative to the carrier";
+		blockcol = '0.85 0.65 0.10';   // gold = the big day-5 evac
+	}
+	else if (code == 4)
+	{
+		label = " VIP ";
+		text  = "Pick up the representative";
+		blockcol = '0.85 0.65 0.10';   // gold = day-5 objective
+	}
+	else if (code == 3)
 	{
 		label = " RETURN ";
 		text  = "Deliver the survivors to the ship";
@@ -576,6 +541,7 @@ static void Hud_DrawStars(vector virtsize)
 
 static float death_time;    // time when we detected death
 static float was_alive;     // were we alive last frame?
+static float gamewon_time;  // time when mission accomplished first shown
 
 // ---------------------------------------------------------------------
 // Intro fade state — track when the BREAKING NEWS overlay appears /
@@ -639,9 +605,10 @@ static void Hud_DrawPax(vector vsz, float pax_count, float pax_alpha)
 	row_w = cap * (fig_w + fig_gap);
 	// Bottom-left, just ABOVE the ammo bars + their "AMMO" caption, and to the
 	// RIGHT of the health bar (x=6, ~20u wide) so nothing overlaps. Each
-	// figure is 2 rows tall (head + body) plus the PAX caption.
+	// figure is 2 rows tall (head + body) plus the PAX caption. Sits ~48u
+	// above the ammo block so there's a clean gap above the "AMMO" label.
 	base_x = 32;
-	base_y = vsz_y - row_h * 2 - 62 - MISSION_BAR_H;
+	base_y = vsz_y - row_h * 2 - 48 - MISSION_BAR_H;
 
 	// Small "PAX" caption above the row.
 	drawstring([base_x, base_y - 11, 0], "PAX", '8 8 0', '0.5 0.85 1', pax_alpha, 0);
@@ -687,6 +654,7 @@ static void Hud_DrawNormal(vector virtsize)
 	float ammo = getstatf(STAT_AMMO);
 	float wepid = getstatf(STAT_HUD_WEP);
 	float wepmdl = getstati(STAT_WEAPONMODELI);
+	float vtype = getstatf(STAT_HUD_VTYPE);
 
 	if (health < 0) health = 0;
 	if (ammo < 0 || ammo > 1000) ammo = 0;
@@ -764,9 +732,76 @@ static void Hud_DrawNormal(vector virtsize)
 		}
 	}
 
-	// Weapon image (bottom-right corner, flush).
-	if (wepmdl && wepid >= 0 && wepid < NUM_WEAPONS)
+	// Weapon display (bottom-right corner).
+	if (wepmdl && vtype == VTYPE_HELO)
 	{
+		// Strip de 3 armas para el heli: 1=AUTO  2=HELLFIRE  3=FLARES
+		float ammo2 = getstatf(STAT_HUD_AMMO2);
+		float ammo3 = getstatf(STAT_HUD_AMMO3);
+
+		// Slot activo: wepid 0=gun, 7=hell, 20=flares
+		float active_slot;
+		if (wepid == 0) active_slot = 0;
+		else if (wepid == 7) active_slot = 1;
+		else active_slot = 2;
+
+		float slot_w = 148;
+		float slot_h = 38;
+		float slot_gap = 3;
+		float strip_h = slot_h * 3 + slot_gap * 2;
+		float sx = virtsize_x - slot_w - 6;
+		float sy0 = virtsize_y - strip_h - 6 - MISSION_BAR_H;
+
+		float si;
+		for (si = 0; si < 3; si++)
+		{
+			float sy = sy0 + si * (slot_h + slot_gap);
+			float active = (si == active_slot);
+			float icon_alpha = active ? 0.95 : 0.4;
+			vector txt_col = active ? '1 1 1' : '0.55 0.55 0.55';
+
+			// Fondo del slot
+			drawfill([sx, sy, 0], [slot_w, slot_h, 0], '0 0 0', active ? 0.55 : 0.22, 0);
+			// Barra izquierda verde si activo
+			if (active)
+				drawfill([sx, sy, 0], [2, slot_h, 0], '0.2 0.9 0.2', 0.95, 0);
+
+			// Numero de tecla
+			drawstring([sx + 5, sy + slot_h/2 - 6, 0], ftos(si + 1), '12 12 0', txt_col, 1, 0);
+
+			if (si == 0)  // ametralladora
+			{
+				drawpic([sx + 20, sy + 2, 0], wep_pics[0], [66, 34, 0], '1 1 1', icon_alpha, 0);
+				drawstring([sx + 90, sy + slot_h/2 - 4, 0], "AUTO", '8 8 0', txt_col, 0.8, 0);
+			}
+			else if (si == 1)  // hellfire
+			{
+				drawpic([sx + 20, sy + 2, 0], wep_pics[7], [66, 34, 0], '1 1 1', icon_alpha, 0);
+				// Pips de municion (max 4)
+				float pi;
+				for (pi = 0; pi < 4; pi++)
+				{
+					vector pcol = (pi < ammo2) ? '1 0.45 0' : '0.25 0.25 0.25';
+					drawfill([sx + 90 + pi * 12, sy + slot_h/2 - 4, 0], [9, 9, 0], pcol, 0.9, 0);
+				}
+			}
+			else  // flares
+			{
+				drawstring([sx + 20, sy + slot_h/2 - 5, 0], "FLARES", '10 10 0',
+					active ? '1 1 0.4' : '0.5 0.5 0.2', 0.9, 0);
+				// Pips de municion (max 6)
+				float fi;
+				for (fi = 0; fi < 6; fi++)
+				{
+					vector fcol = (fi < ammo3) ? '0.7 0.85 1' : '0.2 0.2 0.2';
+					drawfill([sx + 88 + fi * 9, sy + slot_h/2 - 4, 0], [7, 9, 0], fcol, 0.9, 0);
+				}
+			}
+		}
+	}
+	else if (wepmdl && wepid >= 0 && wepid < NUM_WEAPONS)
+	{
+		// Icono unico para vehiculos que no son el heli
 		vector picsize = [66 * 2, 34 * 2, 0];
 		vector picpos = [virtsize_x - picsize_x - 6, virtsize_y - picsize_y - 6 - MISSION_BAR_H, 0];
 		drawpic(picpos, wep_pics[wepid], picsize, '1 1 1', 0.9, 0);
@@ -859,6 +894,233 @@ static void Hud_DrawNewscast(float news_w, float news_h, float news_phase)
 	drawstring([sw + 1200 - offset, ticker_y + 3, 0], ticker, '11 11 0', '1 1 0.7', 1, 0);
 };
 
+// Day briefing curtain: a dark full-screen blackout with a highlighted
+// horizontal band across the middle showing "DIA N" big on top and a smaller
+// "QUOTA: n" beneath it. Shown between days (STAT_HUD_INTRO > 0).
+static void Hud_DrawDayBriefing(vector virtsize)
+{
+	float sw;
+	float sh;
+	float dnum;
+	float quota;
+	string dtxt;
+	string qtxt;
+	float band_h;
+	float band_y;
+	float dw;
+	float qw;
+
+	sw = virtsize_x;
+	sh = virtsize_y;
+	dnum = getstatf(STAT_HUD_DAY);
+	quota = getstatf(STAT_HUD_QUOTA);
+
+	// Full-screen blackout curtain.
+	drawfill([0, 0, 0], [sw, sh, 0], '0 0 0', 0.92, 0);
+
+	// Highlighted horizontal band across the centre.
+	band_h = 120;
+	band_y = (sh - band_h) / 2;
+	drawfill([0, band_y, 0], [sw, band_h, 0], '0.08 0.12 0.2', 1, 0);
+	// Thin accent lines top and bottom of the band.
+	drawfill([0, band_y, 0],              [sw, 3, 0], '0.85 0.7 0.2', 1, 0);
+	drawfill([0, band_y + band_h - 3, 0], [sw, 3, 0], '0.85 0.7 0.2', 1, 0);
+
+	// "DAY N" big, centred near the top of the band.
+	dtxt = strcat("DAY ", ftos(dnum));
+	dw = strlen(dtxt) * 28;                  // 28px glyph advance
+	drawstring([(sw - dw) / 2, band_y + 24, 0], dtxt, '28 28 0', '1 1 1', 1, 0);
+
+	// "QUOTA: n" smaller, centred below.
+	qtxt = strcat("QUOTA: ", ftos(quota));
+	qw = strlen(qtxt) * 14;
+	drawstring([(sw - qw) / 2, band_y + 74, 0], qtxt, '14 14 0', '0.85 0.9 1', 1, 0);
+};
+
+// ---------------------------------------------------------------------
+// Hud_DrawDeathSummary — resumen breve al morir. Muestra cuantos civiles
+// has salvado y la distancia recorrida (la "vida" de esta partida), y
+// debajo los helicopteros que te quedan. Aparece centrado, con un fade
+// de entrada, durante los primeros segundos de la muerte; despues cede
+// el sitio a la pantalla de seleccion de vehiculo. `alpha` lo controla el
+// llamador segun el tiempo transcurrido desde la muerte.
+// ---------------------------------------------------------------------
+static void Hud_DrawDeathSummary(vector virtsize, float alpha)
+{
+	float saved;
+	float dist;
+	float helis;
+	float km;
+	string txt;
+	float tw;
+	float cx;
+	float panel_w;
+	float panel_h;
+	float panel_x;
+	float panel_y;
+	float row_y;
+	float n;
+	float icon_total;
+	float icon_x;
+
+	saved = getstatf(STAT_HUD_SAVED);
+	dist  = getstatf(STAT_HUD_DISTANCE);
+	helis = getstatf(STAT_HUD_HELIS);
+	if (saved < 0) saved = 0;
+	if (dist < 0) dist = 0;
+	if (helis < 0) helis = 0;
+
+	cx = virtsize_x * 0.5;
+	panel_w = 360;
+	panel_h = 150;
+	panel_x = cx - panel_w * 0.5;
+	panel_y = virtsize_y * 0.30;
+
+	// Panel oscuro de fondo.
+	drawfill([panel_x, panel_y, 0], [panel_w, panel_h, 0],
+		'0 0 0', 0.7 * alpha, 0);
+	// Filo superior ambar.
+	drawfill([panel_x, panel_y, 0], [panel_w, 3, 0],
+		'0.9 0.7 0.2', alpha, 0);
+
+	// Titulo.
+	txt = "MISSION OVER";
+	tw = strlen(txt) * 14;
+	drawstring([cx - tw * 0.5, panel_y + 14, 0], txt, '14 14 0',
+		'1 0.5 0.4', alpha, 0);
+
+	row_y = panel_y + 48;
+
+	// Civiles salvados.
+	txt = strcat("CIVILIANS SAVED   ", ftos(saved));
+	tw = strlen(txt) * 10;
+	drawstring([cx - tw * 0.5, row_y, 0], txt, '10 10 0',
+		'0.7 1 0.7', alpha, 0);
+
+	// Distancia recorrida. Las unidades de Quake son ~ pies; convertimos a
+	// "km" de juego dividiendo entre 1000 para una cifra legible.
+	km = dist / 1000;
+	txt = strcat("DISTANCE FLOWN    ", ftos(floor(km * 10) / 10));
+	txt = strcat(txt, " km");
+	tw = strlen(txt) * 10;
+	drawstring([cx - tw * 0.5, row_y + 18, 0], txt, '10 10 0',
+		'0.7 0.9 1', alpha, 0);
+
+	// Separador.
+	drawfill([panel_x + 30, row_y + 42, 0], [panel_w - 60, 1, 0],
+		'1 1 1', 0.3 * alpha, 0);
+
+	// Helicopteros restantes (empiezas con 3). Iconos como cuadrados.
+	txt = "HELICOPTERS LEFT";
+	tw = strlen(txt) * 9;
+	drawstring([cx - tw * 0.5, row_y + 52, 0], txt, '9 9 0',
+		'0.9 0.9 0.9', alpha, 0);
+
+	icon_total = helis * 18 - 4;     // 14 wide + 4 gap, sin gap final
+	if (icon_total < 0) icon_total = 0;
+	icon_x = cx - icon_total * 0.5;
+	n = 0;
+	while (n < helis)
+	{
+		drawfill([icon_x + n * 18, row_y + 70, 0], [14, 10, 0],
+			'0.4 0.8 1', alpha, 0);
+		drawfill([icon_x + n * 18 + 2, row_y + 72, 0], [10, 6, 0],
+			'0.7 0.9 1', alpha, 0);
+		n = n + 1;
+	}
+};
+
+static void Hud_DrawMissionAccomplished(vector virtsize, float alpha)
+{
+	float saved;
+	float dist;
+	float shots;
+	float km;
+	string txt;
+	float tw;
+	float cx;
+	float panel_w;
+	float panel_h;
+	float panel_x;
+	float panel_y;
+	float row_y;
+
+	saved  = getstatf(STAT_HUD_SAVED);
+	dist   = getstatf(STAT_HUD_DISTANCE);
+	shots  = getstatf(STAT_HUD_SHOTS);
+	if (saved  < 0) saved  = 0;
+	if (dist   < 0) dist   = 0;
+	if (shots  < 0) shots  = 0;
+
+	cx      = virtsize_x * 0.5;
+	panel_w = 420;
+	panel_h = 230;
+	panel_x = cx - panel_w * 0.5;
+	panel_y = virtsize_y * 0.18;
+
+	// Fondo negro semitransparente sobre toda la pantalla.
+	drawfill([0, 0, 0], [virtsize_x, virtsize_y, 0], '0 0 0', 0.75 * alpha, 0);
+
+	// Panel central oscuro.
+	drawfill([panel_x, panel_y, 0], [panel_w, panel_h, 0],
+		'0.05 0.10 0.05', 0.92 * alpha, 0);
+
+	// Borde superior verde.
+	drawfill([panel_x, panel_y, 0], [panel_w, 4, 0],
+		'0.2 0.9 0.3', alpha, 0);
+	// Borde inferior verde oscuro.
+	drawfill([panel_x, panel_y + panel_h - 2, 0], [panel_w, 2, 0],
+		'0.1 0.5 0.15', alpha, 0);
+
+	// Título.
+	txt = "MISSION ACCOMPLISHED";
+	tw  = strlen(txt) * 18;
+	drawstring([cx - tw * 0.5, panel_y + 14, 0], txt, '18 18 0',
+		'0.3 1 0.4', alpha, 0);
+
+	// Subtítulo.
+	txt = "United Nations intervened - peace deal signed";
+	tw  = strlen(txt) * 8;
+	drawstring([cx - tw * 0.5, panel_y + 44, 0], txt, '8 8 0',
+		'0.7 0.85 0.7', alpha * 0.9, 0);
+
+	// Separador.
+	drawfill([panel_x + 30, panel_y + 64, 0], [panel_w - 60, 1, 0],
+		'0.2 0.6 0.25', 0.6 * alpha, 0);
+
+	row_y = panel_y + 80;
+
+	// Civiles rescatados.
+	txt = strcat("CIVILIANS RESCUED   ", ftos(saved));
+	tw  = strlen(txt) * 10;
+	drawstring([cx - tw * 0.5, row_y, 0], txt, '10 10 0',
+		'0.5 1 0.55', alpha, 0);
+
+	// Distancia recorrida.
+	km  = dist / 1000;
+	txt = strcat("DISTANCE FLOWN      ", ftos(floor(km * 10) / 10));
+	txt = strcat(txt, " km");
+	tw  = strlen(txt) * 10;
+	drawstring([cx - tw * 0.5, row_y + 22, 0], txt, '10 10 0',
+		'0.5 0.85 1', alpha, 0);
+
+	// Disparos realizados.
+	txt = strcat("SHOTS FIRED         ", ftos(shots));
+	tw  = strlen(txt) * 10;
+	drawstring([cx - tw * 0.5, row_y + 44, 0], txt, '10 10 0',
+		'1 0.9 0.5', alpha, 0);
+
+	// Separador inferior.
+	drawfill([panel_x + 30, row_y + 68, 0], [panel_w - 60, 1, 0],
+		'0.2 0.6 0.25', 0.4 * alpha, 0);
+
+	// Mensaje de cierre.
+	txt = "Thank you for your service.";
+	tw  = strlen(txt) * 9;
+	drawstring([cx - tw * 0.5, row_y + 82, 0], txt, '9 9 0',
+		'0.6 0.8 0.6', alpha * 0.8, 0);
+};
+
 static void Hud_Draw(vector virtsize, float showscores)
 {
 	float health = getstatf(STAT_HEALTH);
@@ -873,6 +1135,19 @@ static void Hud_Draw(vector virtsize, float showscores)
 	float wepmdl = getstati(STAT_WEAPONMODELI);
 	float vtype = getstatf(STAT_HUD_VTYPE);
 
+	// Mission accomplished screen — overrides everything, fades in over 1s.
+	float gamewon = getstatf(STAT_HUD_GAMEWON);
+	if (gamewon)
+	{
+		if (!gamewon_time)
+			gamewon_time = time;
+		float gw_a = (time - gamewon_time);
+		if (gw_a > 1) gw_a = 1;
+		Hud_DrawMissionAccomplished(virtsize, gw_a);
+		return;
+	}
+	gamewon_time = 0;
+
 	// Track death transition
 	float is_dead = (!wepmdl || health <= 2);
 	if (is_dead && was_alive)
@@ -886,15 +1161,35 @@ static void Hud_Draw(vector virtsize, float showscores)
 	float vstyle = getstatf(STAT_HUD_VSTYLE);
 	if (is_dead)
 	{
-		float delay = 2;     // seconds before showing selection
-		float fadein = 1.5;  // seconds for fade in
+		float delay = 4;     // segundos antes de mostrar "CLICK TO RESPAWN"
+		float fadein = 1;    // segundos de fade-in del mensaje de respawn
 		float elapsed = time - death_time;
+		float sum_a;
+		float vsel_a;
 
-		if (elapsed > delay && vstyle >= 1 && vstyle <= NUM_VEHICLES)
+		// Resumen de la "vida": civiles salvados, distancia recorrida y
+		// helis restantes. Aparece de inmediato al morir, se mantiene unos
+		// segundos y se desvanece justo cuando entra el "CLICK TO RESPAWN".
+		// Fade-in 0.4s, sostenido hasta 3s, fade-out 1s (termina a los 4s).
+		if (elapsed < 4)
 		{
-			float alpha = (elapsed - delay) / fadein;
-			if (alpha > 1) alpha = 1;
-			Hud_DrawVehicleSelect(virtsize, vstyle, alpha);
+			sum_a = 1;
+			if (elapsed < 0.4)
+				sum_a = elapsed / 0.4;       // fade-in
+			else if (elapsed > 3)
+				sum_a = (4 - elapsed) / 1;   // fade-out
+			if (sum_a < 0) sum_a = 0;
+			if (sum_a > 1) sum_a = 1;
+			Hud_DrawDeathSummary(virtsize, sum_a);
+		}
+
+		// Ya no hay seleccion de vehiculo: en cuanto el resumen se desvanece
+		// mostramos "CLICK TO RESPAWN" hasta que el jugador reaparezca.
+		if (elapsed > delay)
+		{
+			vsel_a = (elapsed - delay) / fadein;
+			if (vsel_a > 1) vsel_a = 1;
+			Hud_DrawVehicleSelect(virtsize, vstyle, vsel_a);
 		}
 		return;
 	}
@@ -914,10 +1209,6 @@ static void Hud_Draw(vector virtsize, float showscores)
 	//   5. Segunda mitad del fade (p >= 0.5): pintamos el nuevo HUD con
 	//      el negro reduciendo: fade-in del nuevo.
 	float target_phase = getstatf(STAT_HUD_INTRO);
-	// TEMP: 24h-news (BREAKING NEWS) overlay disabled. Force phase 0 so we
-	// always draw the normal HUD and never the newscast. Re-enable by
-	// removing this line.
-	target_phase = 0;
 	if (target_phase != intro_last_phase)
 	{
 		intro_fade_dir_time = time;
@@ -957,7 +1248,7 @@ static void Hud_Draw(vector virtsize, float showscores)
 
 	if (visible_phase > 0)
 	{
-		Hud_DrawNewscast(virtsize_x, virtsize_y, visible_phase);
+		Hud_DrawDayBriefing(virtsize);
 	}
 	else
 	{
@@ -972,8 +1263,96 @@ static void Hud_Draw(vector virtsize, float showscores)
 	}
 };
 
+// ---------------------------------------------------------------------
+// Sun lens flare (screen-space, 2D overlay)
+// ---------------------------------------------------------------------
+//
+// This engine's CSQC has NO getproperty (view) and NO traceline (server-only)
+// builtins, so the SERVER does the 3D work and hands us the result as stats:
+//   STAT_HUD_SUN_FWD/RT/UP : the sun direction projected onto the player's
+//                            view axes (dot with v_forward / v_right / v_up).
+//   STAT_HUD_SUN_VIS       : 1 = sun is in front AND not blocked by solid
+//                            world (terrain/buildings); 0 = hide the flare.
+// We just project (rt/fwd, up/fwd) onto the screen with an assumed FOV and
+// draw the glow + halo chain additively. Clouds are non-solid so the flare
+// glows through them (by design).
+float SUN_FOV_X = 90;   // assumed horizontal FOV for the screen projection
+
+static void Hud_DrawLensFlare(vector virtsize)
+{
+	float fwd;
+	float rt;
+	float up;
+	float scrdist;
+	float cx;
+	float cy;
+	float sx;
+	float sy;
+	float i;
+	float t;
+	float fx;
+	float fy;
+	float fsz;
+	float vis;
+	float dsun;
+	float nearfade;
+
+	if (getstatf(STAT_HUD_SUN_VIS) < 1) return;   // sun behind the camera
+
+	fwd = getstatf(STAT_HUD_SUN_FWD);
+	if (fwd <= 0.05) return;
+	rt = getstatf(STAT_HUD_SUN_RT);
+	up = getstatf(STAT_HUD_SUN_UP);
+
+	scrdist = (virtsize_x * 0.5) / tan(SUN_FOV_X * 0.5 * M_PI / 180);
+
+	cx = virtsize_x * 0.5;
+	cy = virtsize_y * 0.5;
+	sx = cx + (rt / fwd) * scrdist;
+	sy = cy - (up / fwd) * scrdist;
+
+	// This engine ignores the additive drawflag but honours ALPHA, so we draw
+	// the pale gfx ALPHA-BLENDED at low opacity: a translucent veil of light
+	// that mixes into the sky, not opaque discs. Soft falloff in the gfx +
+	// low alpha = a flare, not a physical object.
+	//
+	// Fade the whole flare as the sun moves off-axis (brightest dead-ahead).
+	vis = fwd;
+	if (vis > 1) vis = 1;
+
+	fsz = 110;
+	drawpic([sx - fsz*0.5, sy - fsz*0.5, 0], "gfx/lens_glow.lmp",
+		[fsz, fsz, 0], '1 1 0.92', 0.5 * vis, 0);
+
+	// Flare halo chain along the line from the sun through screen centre.
+	for (i = 0; i < 6; i = i + 1)
+	{
+		t = 0.25 + i * 0.32;          // positions along the sun→centre→far line
+		fx = sx + (cx - sx) * t;
+		fy = sy + (cy - sy) * t;
+		fsz = 24 + (i & 1) * 18;      // alternate small/large rings
+		vector hc;
+		if (i == 0)      hc = '0.85 0.9 1.0';
+		else if (i == 2) hc = '1.0 0.92 0.82';
+		else if (i == 4) hc = '0.9 1.0 0.9';
+		else             hc = '1 1 1';
+		// Fade halos to fully transparent near the sun (where the glow lives
+		// and a halo would look wrong): 0 within ~90px of the sun, full beyond
+		// ~220px.
+		dsun = sqrt((fx - sx)*(fx - sx) + (fy - sy)*(fy - sy));
+		nearfade = (dsun - 90) / 130;
+		if (nearfade < 0) nearfade = 0;
+		if (nearfade > 1) nearfade = 1;
+		// Halo opacity: dropped 30% from before (0.22 → 0.154), times the
+		// off-axis fade and the near-sun fade.
+		drawpic([fx - fsz*0.5, fy - fsz*0.5, 0], "gfx/lens_ring.lmp",
+			[fsz, fsz, 0], hc, 0.154 * vis * nearfade, 0);
+	}
+};
+
 void(vector virtsize, float showscores) CSQC_DrawHud =
 {
+	Hud_DrawLensFlare(virtsize);
 	Hud_Draw(virtsize, showscores);
 };
 

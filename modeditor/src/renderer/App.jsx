@@ -41,6 +41,14 @@ export function App() {
     toasterRef.current?.show({ message, intent, timeout });
   }, []);
 
+  // Exponemos el toast en window para que la capa de estado (store.js, sin
+  // React) pueda dar feedback puntual — p.ej. "seleccion copiada al
+  // portapapeles". Desacoplado: si no existe, el store simplemente no avisa.
+  useEffect(() => {
+    window.__toast = toast;
+    return () => { if (window.__toast === toast) delete window.__toast; };
+  }, [toast]);
+
   // Subscribe to compile log stream from main process. Track the active
   // tool (qbsp / vis / light) so the title can show the current phase.
   useEffect(() => {

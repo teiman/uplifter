@@ -257,6 +257,14 @@ const PALETTE = [
   { id: 'curve-out-E', label: 'curve-out E', tex: texturesFor('curve-out-E'), color: '#3a3a3a' },
   { id: 'curve-out-S', label: 'curve-out S', tex: texturesFor('curve-out-S'), color: '#3a3a3a' },
   { id: 'curve-out-O', label: 'curve-out O', tex: texturesFor('curve-out-O'), color: '#3a3a3a' },
+  // hlanding — helipad corner tile. Same machinery as curve-out (4 cardinal
+  // rotations, painting cycles). Art hand-painted per direction. APPEND-ONLY.
+  { id: 'hlanding-N', label: 'hlanding N', tex: texturesFor('hlanding-N'), color: '#2e3a3a' },
+  { id: 'hlanding-E', label: 'hlanding E', tex: texturesFor('hlanding-E'), color: '#2e3a3a' },
+  { id: 'hlanding-S', label: 'hlanding S', tex: texturesFor('hlanding-S'), color: '#2e3a3a' },
+  { id: 'hlanding-O', label: 'hlanding O', tex: texturesFor('hlanding-O'), color: '#2e3a3a' },
+  // Ship block: deck top + riveted hull sides w/ red waterline. APPEND-ONLY.
+  { id: 'barco', label: 'barco', tex: texturesFor('barco'), color: '#6a7078' },
 ];
 
 /** Special objects placed in a cell. See types.mjs for the field spec. */
@@ -288,6 +296,12 @@ const SPECIAL_OBJECTS = [
     footprint: 0.9, isBuilding: true, tex: texturesFor('cuartel') },
   { kind: 'bunker',  label: 'bunker',  glyph: '◧', color: '#7a7a7a',
     footprint: 0.8, isBuilding: true, tex: texturesFor('bunker') },
+  // Shipping containers: stacked 2-4 high like casa, but each cube gets a
+  // different colour chosen by mapWriter from cell position (2-cell bands) +
+  // level. containerColors lists the cont<N> colour-texture ids.
+  { kind: 'contenedores', label: 'contenedores', glyph: '▦', color: '#2e5a8a',
+    footprint: 1, isBuilding: true, tex: texturesFor('cont0'),
+    containerColors: ['cont0', 'cont1', 'cont2', 'cont3', 'cont4', 'cont5'] },
   { kind: 'lampara', label: 'lampara', glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
@@ -317,14 +331,29 @@ const ENEMY_TYPES = [
   { kind: 'monster_drone2', label: 'monster_drone2', glyph: '✈', color: '#5078a8', needsPath: true,  aerial: true },
   { kind: 'monster_helo',   label: 'monster_helo',   glyph: '↻', color: '#609080', needsPath: true,  aerial: true },
   { kind: 'monster_swarm_pilot', label: 'monster_swarm_pilot', glyph: '✦', color: '#d06030', needsPath: false, aerial: true },
+  // Bombing launcher: indestructible ambient hazard. Lobs bursts of slow
+  // ballistic rockets at random city pickups. Stationary, no path.
+  { kind: 'bombing_launcher', label: 'bombing launcher', glyph: '💣', color: '#e05028', needsPath: false, aerial: false },
+  // Decorative bird flock: pacific, non-solid swarm boid. No path.
+  { kind: 'monster_birds_flock', label: 'birds', glyph: '🕊', color: '#e8e8f0', needsPath: false, aerial: true },
   // Gameplay entities (no enemigos): pickups y barco.
-  { kind: 'info_scrap',  label: 'info_scrap',  glyph: '✪', color: '#c0c060', needsPath: false, aerial: false, gameplay: true },
   { kind: 'info_pickup', label: 'info_pickup', glyph: '◉', color: '#60c060', needsPath: false, aerial: false, gameplay: true },
   { kind: 'info_ship',   label: 'info_ship',   glyph: '⚓', color: '#4070c0', needsPath: false, aerial: false, gameplay: true },
+  { kind: 'info_ship_goal', label: 'ship goal', glyph: '⚑', color: '#40a0c0', needsPath: false, aerial: false, gameplay: true },
   { kind: 'info_hospital', label: 'info_hospital', glyph: '✚', color: '#c04040', needsPath: false, aerial: false, gameplay: true },
   { kind: 'info_representative', label: 'info_representative', glyph: '★', color: '#e0d040', needsPath: false, aerial: false, gameplay: true },
   { kind: 'info_carrier', label: 'info_carrier', glyph: '⏏', color: '#3060a0', needsPath: false, aerial: false, gameplay: true },
   { kind: 'info_enemy_slot', label: 'info_enemy_slot', glyph: '◇', color: '#909090', needsPath: false, aerial: false, gameplay: true },
+  // counterforces_origin: punto de spawn de unidades Davenport aliadas al
+  // jugador. Coloca uno o varios; el sistema elige el más cercano al objetivo.
+  { kind: 'counterforces_origin', label: 'counterforces', glyph: '⊛', color: '#50c878', needsPath: false, aerial: false, gameplay: true },
+  // forces_attack_origin: punto de spawn de ENEMIGOS terrestres (tanques)
+  // hostiles al jugador. Espejo de counterforces_origin, pero atacan.
+  { kind: 'forces_attack_origin', label: 'forces attack', glyph: '⊗', color: '#c83232', needsPath: false, aerial: false, gameplay: true },
+  // Props decorativos: aviones aparcados (solo de mirar, makestatic al iniciar).
+  // El mapper los rota con .angles; por defecto quedan en diagonal.
+  { kind: 'prop_plane_a10',    label: 'A-10 (parked)',  glyph: '✈', color: '#8a8f96', needsPath: false, aerial: false },
+  { kind: 'prop_plane_parked', label: 'plane (parked)', glyph: '✈', color: '#6f7a86', needsPath: false, aerial: false },
 ];
 const ENEMY_BY_KIND = new Map(ENEMY_TYPES.map(e => [e.kind, e]));
 

@@ -20,6 +20,14 @@ void() T_HETouch =
 	{
 		return;
 	}
+	// Running over a civilian: don't crash — squash them. Kill the civilian
+	// with a player-death squelch and keep flying, no damage to the helo.
+	if ((other.classname == "civilian"))
+	{
+		sound(other, CHAN_VOICE, "player/udeath.wav", 1, ATTN_NORM);
+		T_Damage(other, self, self.owner, 1000);
+		return;
+	}
 	if ((other != world))
 	{
 		if ((!other.takedamage && (other.solid < 2)))
@@ -194,6 +202,7 @@ void() HE_Fall =
 
 void() HE_Die =
 {
+	drop_vehicle_loot(self.origin);
 	WriteByte(MSG_BROADCAST, SVC_TEMPENTITY);
 	WriteByte(MSG_BROADCAST, TE_EXPLOSION);
 	WriteCoord(MSG_BROADCAST, self.origin_x);

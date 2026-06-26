@@ -98,6 +98,16 @@ void() T_DroneTouch =
 			return;
 		}
 	}
+	// Guarda de re-entrada: si el avion YA esta muriendo (su think es la
+	// explosion programada) no repetimos toda la secuencia cada frame. Sin
+	// esto, un drone muerto que queda solapando 'world' (atascado en el suelo
+	// o subiendo lento dentro de la geometria) reinicia BecomeExplosion en
+	// cada toque y nunca llega a ejecutarlo → cascada infinita de explosiones
+	// (el bug del swarm pilot). En cuanto explota una vez, lo silenciamos.
+	if ((self.think == BecomeExplosion))
+	{
+		return;
+	}
 	T_RadiusDamage(self, self, 240, self);
 	WriteByte(MSG_BROADCAST, SVC_TEMPENTITY);
 	WriteByte(MSG_BROADCAST, TE_EXPLOSION);
@@ -127,6 +137,14 @@ void() T_DroneTouch =
 		T_Damage(self, self, self, 1000);
 		self.think = BecomeExplosion;
 		self.nextthink = (time + 0.1);
+		// Desactiva colisiones mientras espera la explosion: sin esto, si
+		// sigue solapando geometria volveria a tocar antes de que el think
+		// dispare, reiniciando todo (cascada). Inerte y no-solido hasta
+		// BecomeExplosion lo elimine.
+		self.touch = SUB_Null;
+		self.solid = SOLID_NOT;
+		self.movetype = MOVETYPE_NONE;
+		self.velocity = '0 0 0';
 	}
 	else
 	{
@@ -150,6 +168,7 @@ void() T_DroneTouch =
 
 void() drone_die =
 {
+	drop_vehicle_loot(self.origin);
 	WriteByte(MSG_BROADCAST, SVC_TEMPENTITY);
 	WriteByte(MSG_BROADCAST, TE_EXPLOSION);
 	WriteCoord(MSG_BROADCAST, self.origin_x);

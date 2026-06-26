@@ -190,7 +190,33 @@ void() Stars_HighFlightTick =
 		return;
 	}
 	Stars_Add(1);
-	sprint(self, "[notoriety] spotted flying high\n");
+};
+
+// Called once per PlayerPreThink. Every STAR_RADAR_TICK seconds:
+//   - painted by radar (radar_locked_until >= time → the DANGER/RADAR warning)
+//     → +1 star (they've got a fix on you and are calling it in).
+//   - else hidden in a cloud (Stars_CloudHidden) → -1 star (you slip off the
+//     net). This is a full integer step, stronger/clearer than the fractional
+//     cloud decay in Stars_DecayTick.
+// If neither, nothing happens here (normal decay still applies elsewhere).
+float STAR_RADAR_TICK = 5;   // seconds between radar/cloud notoriety steps
+
+void() Stars_RadarTick =
+{
+	if ((time < self.star_radar_next))
+	{
+		return;
+	}
+	self.star_radar_next = (time + STAR_RADAR_TICK);
+
+	if ((self.radar_locked_until >= time))
+	{
+		Stars_Add(1);
+	}
+	else if (Stars_CloudHidden())
+	{
+		Stars_Add(-1);
+	}
 };
 
 // Notoriety gating: returns TRUE iff the current monster (`self`) should

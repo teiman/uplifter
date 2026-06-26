@@ -20,6 +20,14 @@ float HOSP_RATE_HOSPITAL   = 4;
 float HOSP_REWARD_SHIP     = 250;
 float HOSP_REWARD_HOSPITAL = 400;
 
+// Reparacion del heli posado en un punto de descarga. Cada HOSP_REPAIR_RATE
+// segundos se restauran HOSP_REPAIR_AMOUNT puntos de health (sobre la salud
+// absoluta del vehiculo, no el 0-100 del HUD), hasta max_health. Lento a
+// proposito: recompensa quedarse, sin volver el barco en un boton de "full
+// health" instantaneo.
+float HOSP_REPAIR_RATE   = 0.5;   // un tic cada medio segundo
+float HOSP_REPAIR_AMOUNT = 4;     // puntos de health por tic
+
 // Inicializa los campos comunes para un punto de descarga ya
 // spawneado. classname diferenciado: "info_ship" o "info_hospital".
 void(entity h, float is_hospital) Hospital_Init =
@@ -96,6 +104,37 @@ void() hospital_think =
 		self.hosp_next_release = (time + self.hosp_rate);
 	}
 	self.nextthink = (time + 0.5);
+};
+
+// Repara poco a poco el vehiculo posado en un punto de descarga. Llamada
+// desde ship_check para CADA heli posado dentro del radio. No repara puntos
+// destruidos (un barco hundido / hospital bombardeado no cura). El ritmo lo
+// marca veh.repair_next para que sea gradual aunque ship_check corra varias
+// veces por segundo.
+void(entity h, entity veh) Hospital_RepairVehicle =
+{
+	if (h.hosp_destroyed)
+	{
+		return;
+	}
+	if ((veh.health <= 0) || (veh.max_health <= 0))
+	{
+		return;   // destruido o sin max_health configurado
+	}
+	if ((veh.health >= veh.max_health))
+	{
+		return;   // ya a tope
+	}
+	if ((time < veh.repair_next))
+	{
+		return;
+	}
+	veh.repair_next = (time + HOSP_REPAIR_RATE);
+	veh.health = (veh.health + HOSP_REPAIR_AMOUNT);
+	if ((veh.health > veh.max_health))
+	{
+		veh.health = veh.max_health;
+	}
 };
 
 // Marca un hospital como destruido. Llamada por el sistema de día cuando

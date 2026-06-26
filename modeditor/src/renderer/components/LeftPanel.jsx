@@ -66,6 +66,21 @@ export function LeftPanel() {
             <span className="swatch-label">{b.label}</span>
             {b.type === 'texture' ? (
               <span className="swatch-preview" style={texturePreviewStyle(b.id, b.color)} />
+            ) : b.type === 'deco' ? (
+              // Bevel: en vez de un glyph de texto (poco claro), dibujamos la
+              // FORMA del chaflan — un cuadrado al que le falta una esquina,
+              // recortado con clip-path. Asi se ve de un vistazo que es un
+              // bisel y no un tile cualquiera.
+              <span className="swatch-preview swatch-preview-object" style={{ backgroundColor: '#1a2026' }}>
+                <span
+                  style={{
+                    position: 'absolute', inset: '20%',
+                    backgroundColor: b.color,
+                    // Pentagono: cuadrado con la esquina sup-der cortada a 45°.
+                    clipPath: 'polygon(0 0, 60% 0, 100% 40%, 100% 100%, 0 100%)',
+                  }}
+                />
+              </span>
             ) : (
               <span className="swatch-preview swatch-preview-object" style={{ backgroundColor: b.color }}>
                 <span className="swatch-glyph">{b.glyph}</span>

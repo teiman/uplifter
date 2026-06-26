@@ -761,7 +761,6 @@ void() ImpulseCommands =
 		self = sc;
 		info_scrap();
 		self = oplr;
-		sprint(self, "[debug] scrap entity spawned\n");
 	}
 	if ((self.impulse == 33))
 	{
@@ -871,6 +870,7 @@ void() W_WeaponFrame =
 	if (self.button0)
 	{
 		SuperDamageSound();
+		self.shots_fired = (self.shots_fired + 1);
 		self.th_missile();
 	}
 };

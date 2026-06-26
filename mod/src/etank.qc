@@ -76,6 +76,8 @@ void() etank_sound =
 
 void() etank_die =
 {
+	local vector wreck;
+	wreck = self.origin;
 	self.takedamage = 0;
 	if (self.tur1)
 	{
@@ -85,6 +87,7 @@ void() etank_die =
 	{
 		remove(self.tur2);
 	}
+	drop_vehicle_loot(wreck);
 	AC_Explode();
 };
 

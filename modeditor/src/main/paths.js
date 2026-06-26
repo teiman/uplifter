@@ -23,6 +23,9 @@ const BIN_DIR = isDev
 
 const TMP_DIR = path.join(PROJECT_ROOT, 'tmp');
 const WADS_DIR = path.join(PROJECT_ROOT, 'wads');
+// Reusable map-area props (.tprop). Lives in the repo so saved building/area
+// props are versioned with the project and shared.
+const PROPS_DIR = path.join(PROJECT_ROOT, 'props');
 
 // PNG source for the auto-generated textures.wad. In dev the textures
 // live in the renderer's source tree (so Vite serves them to the
@@ -32,7 +35,7 @@ const WADS_DIR = path.join(PROJECT_ROOT, 'wads');
 const TEXTURES_SRC_DIR = path.join(PROJECT_ROOT, 'src', 'renderer', 'assets', 'textures');
 
 function ensureRuntimeDirs() {
-  for (const dir of [TMP_DIR, WADS_DIR]) {
+  for (const dir of [TMP_DIR, WADS_DIR, PROPS_DIR]) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch {}
   }
 }
@@ -43,6 +46,7 @@ module.exports = {
   BIN_DIR,
   TMP_DIR,
   WADS_DIR,
+  PROPS_DIR,
   TEXTURES_SRC_DIR,
   ensureRuntimeDirs,
 };

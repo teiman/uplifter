@@ -30,7 +30,6 @@ float MINIMAP_CAM_Z = -2280;
 .float minimap_peeking;              // 1 while M is held
 .vector minimap_saved_angles;        // restaurar al soltar M
 .vector minimap_saved_vangle;
-.float minimap_dbg_last_t;           // rate-limit del debug
 .vector minimap_saved_pl_origin;     // player origin antes del peek
 .float minimap_saved_pl_movetype;
 .float minimap_saved_pl_solid;

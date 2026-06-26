@@ -68,6 +68,28 @@ function biomeTexForPaletteIdx(idx) {
   return PALETTE[idx].tex;
 }
 
+// Cache of texturesFor() per container colour id so we don't rebuild the
+// 5-face object for every cube.
+const _containerTexCache = {};
+function containerTexFor(colorId) {
+  let t = _containerTexCache[colorId];
+  if (!t) { t = texturesFor(colorId); _containerTexCache[colorId] = t; }
+  return t;
+}
+
+/**
+ * Pick the container colour for a cube. The colour changes every 2 cells in
+ * X and Y (so a yard reads as 2-wide colour bands, like a container ship)
+ * and also shifts per vertical level, so a single stack mixes colours.
+ * `colors` is objMeta.containerColors (list of cont<N> ids). Returns the
+ * 5-face texture set for that colour.
+ */
+function containerColorTex(colors, col, row, level) {
+  const band = Math.floor(col / 2) + Math.floor(row / 2) * 3 + level;
+  const idx = ((band % colors.length) + colors.length) % colors.length;
+  return containerTexFor(colors[idx]);
+}
+
 /**
  * Emit a Valve 220 face line. Portado tal cual desde
  * d:/code/atlasmaper/src/shared/tileBrushes.js:16 (rampas y cuñas).
@@ -147,6 +169,91 @@ function _rampBrush({ x0, y0, x1, y1, bottomZ, topZ, direction }, texName, opts 
     case 'se': slopeS(); slopeE(); break;
     case 'sw': slopeS(); slopeW(); break;
     default: throw new Error(`rampBrush: bad direction "${direction}"`);
+  }
+  return '{\n' + lines.join('\n') + '\n}';
+}
+
+/**
+ * Brush de "bevel" (chaflan vertical de esquina). Portado de atlasmaper
+ * (wedgeBrush). A diferencia de _rampBrush (que inclina en Z), este corta la
+ * ARISTA VERTICAL de una esquina: en planta, el cuadrado pasa a tener una
+ * esquina diagonal a 45°. Sirve para redondear proa/popa/esquinas del casco
+ * de un barco: el resto del cubo se comporta como tile normal ('barco'), pero
+ * la esquina queda biselada — y bajo el nivel del mar el agua global rellena
+ * el hueco gratis, asi que "a la altura del agua tiene agua".
+ *
+ * Emitido como "clipped box" de 7 caras: las 6 caras axis-aligned de la caja
+ * + 1 plano diagonal de clip. QBSP intersecta los 7 semiespacios y produce el
+ * prisma triangular correcto; las caras de caja que quedan detras del plano
+ * diagonal se recortan a area cero y se descartan. (5 caras no valen: ericw
+ * qbsp tira los brushes de 5 caras como "no visible sides".)
+ *
+ * `corner` indica la esquina que se CORTA (queda en diagonal):
+ *   'ne' → corta la esquina NE (x1,y1).
+ *   'nw' → corta la esquina NO (x0,y1).
+ *   'se' → corta la esquina SE (x1,y0).
+ *   'sw' → corta la esquina SO (x0,y0).
+ *
+ * Convencion mundo (igual que el resto de mapWriter): +Y = norte, +X = este.
+ *   NO = (x0,y1), NE = (x1,y1), SE = (x1,y0), SO = (x0,y0).
+ */
+function _wedgeBrush({ x0, y0, x1, y1, bottomZ, topZ, corner }, texName, opts = {}) {
+  const uScale = opts.uScale ?? 1;
+  const vScale = opts.vScale ?? 1;
+  // Igual que boxBrush: la cara +Z usa topTex, la -Z bottomTex y las
+  // laterales (incl. la diagonal del chaflan) usan texName (el side). Asi un
+  // wedge sigue las mismas reglas de cara que un cubo barco: top=cubierta,
+  // side/capital/base segun el nivel, bottom abajo.
+  const topTex    = opts.topTex    ?? texName;
+  const bottomTex = opts.bottomTex ?? texName;
+  const xy = { u: [1, 0, 0], v: [0, -1, 0] };
+  const xz = { u: [1, 0, 0], v: [0, 0, -1] };
+  const yz = { u: [0, 1, 0], v: [0, 0, -1] };
+  // Ejes para las dos diagonales posibles del corte.
+  const diagSWNE = { u: [1, 1, 0],  v: [0, 0, -1] };  // corte NO↔SE
+  const diagSENW = { u: [1, -1, 0], v: [0, 0, -1] };  // corte NE↔SO
+  const bZ = bottomZ, tZ = topZ;
+  const topUOff = -x0, topVOff = y1;
+  const lines = [];
+  // 6 caras axis-aligned de la caja (mismo winding que boxBrush).
+  lines.push(_face([x0,y1,tZ], [x1,y1,tZ], [x1,y0,tZ],
+    topTex, xy.u, xy.v, topUOff, topVOff, uScale, vScale));         // +Z
+  lines.push(_face([x0,y0,bZ], [x1,y0,bZ], [x1,y1,bZ],
+    bottomTex, xy.u, xy.v, topUOff, topVOff, uScale, vScale));      // -Z
+  lines.push(_face([x1,y0,bZ], [x1,y0,tZ], [x1,y1,tZ],
+    texName, yz.u, yz.v, 0, 0, uScale, vScale));                    // +X
+  lines.push(_face([x0,y1,bZ], [x0,y1,tZ], [x0,y0,tZ],
+    texName, yz.u, yz.v, 0, 0, uScale, vScale));                    // -X
+  lines.push(_face([x0,y1,bZ], [x1,y1,bZ], [x1,y1,tZ],
+    texName, xz.u, xz.v, 0, 0, uScale, vScale));                    // +Y
+  lines.push(_face([x0,y0,tZ], [x1,y0,tZ], [x1,y0,bZ],
+    texName, xz.u, xz.v, 0, 0, uScale, vScale));                    // -Y
+  // 7a cara: plano diagonal de clip. La normal apunta hacia la esquina cortada
+  // (fuera del solido). El corte de la esquina NE/SO va por la diagonal SE-NO
+  // (ejes diagSENW); el de NO/SE va por la diagonal SO-NE (ejes diagSWNE).
+  switch (corner) {
+    case 'sw':
+      // corta SO → diagonal pasa por SE(x1,y0) y NO(x0,y1).
+      lines.push(_face([x1,y0,bZ], [x0,y1,bZ], [x0,y1,tZ],
+        texName, diagSENW.u, diagSENW.v, 0, 0, uScale, vScale));
+      break;
+    case 'se':
+      // corta SE → diagonal por NE(x1,y1) y SO(x0,y0).
+      lines.push(_face([x1,y1,bZ], [x0,y0,bZ], [x0,y0,tZ],
+        texName, diagSWNE.u, diagSWNE.v, 0, 0, uScale, vScale));
+      break;
+    case 'ne':
+      // corta NE → diagonal por NO(x0,y1) y SE(x1,y0).
+      lines.push(_face([x0,y1,bZ], [x1,y0,bZ], [x1,y0,tZ],
+        texName, diagSENW.u, diagSENW.v, 0, 0, uScale, vScale));
+      break;
+    case 'nw':
+      // corta NO → diagonal por SO(x0,y0) y NE(x1,y1).
+      lines.push(_face([x0,y0,bZ], [x1,y1,bZ], [x1,y1,tZ],
+        texName, diagSWNE.u, diagSWNE.v, 0, 0, uScale, vScale));
+      break;
+    default:
+      throw new Error(`_wedgeBrush: bad corner "${corner}"`);
   }
   return '{\n' + lines.join('\n') + '\n}';
 }
@@ -610,6 +717,7 @@ function buildMapText({ tilemap, wadKey, debug = false, phong = true }) {
       out, heights, cols, rows, cellSize, gridHalfX, gridHalfY,
       xMin, xMax, yMin, yMax,
       waterMinZ: BEDROCK_TOP_Z, waterMaxZ: SEA_LEVEL_Z - WATER_DROP,
+      decorations: tilemap.decorations,
     });
   }
 
@@ -778,6 +886,19 @@ function buildMapText({ tilemap, wadKey, debug = false, phong = true }) {
       // 2D pass at the end can merge identical runs across adjacent
       // cells. Sealing runs and inset-building runs sidestep the mesh
       // and emit immediately.
+      // Bevel del casco ('wedge'): si la celda lleva esta decoracion,
+      // sustituimos TODA la columna de terreno (de bedrock a la cima del
+      // terreno) por un cubo achaflanado verticalmente en una esquina. El
+      // resto se comporta como tile normal: textura del bioma de la celda
+      // ('barco'), edificios apilan encima igual, y el agua global rellena
+      // el hueco del chaflan bajo el nivel del mar. dir 0..3 → esquina
+      // cortada NE/SE/SO/NO (mismo orden N→E→S→O que los demas decos).
+      const cellDeco = tilemap.decorations ? decodeDeco(tilemap.decorations[i]) : null;
+      const isBevel = cellDeco && cellDeco.kind === 'wedge' && terrainCubes > 0;
+      const bevelCorner = isBevel
+        ? (['ne', 'se', 'sw', 'nw'][cellDeco.dir] || 'ne')
+        : null;
+
       let run = null;
       function emitRun(r) {
         if (!r) return;
@@ -815,8 +936,36 @@ function buildMapText({ tilemap, wadKey, debug = false, phong = true }) {
       }
       for (let k = 0; k < total; k++) {
         const isTerrainCube = k < terrainCubes;
-        const biomeTex = isTerrainCube ? terrainBiomeTex : buildingBiomeTex;
-        let faces = pickFaceTextures(k, total, neighborMaxK, biomeTex);
+        // Containers: each cube above the terrain takes a colour from its
+        // position (2-cell bands) + level, instead of one texture for the
+        // whole building. level 0 = first container cube on the ground.
+        let cubeBuildingTex = buildingBiomeTex;
+        if (!isTerrainCube && objMeta && objMeta.containerColors) {
+          cubeBuildingTex = containerColorTex(objMeta.containerColors, col, row, k - terrainCubes);
+        }
+        const biomeTex = isTerrainCube ? terrainBiomeTex : cubeBuildingTex;
+        // Terrain cubes pick their face as if the terrain column ended at
+        // terrainCubes (not the full stack). So the TOP terrain cube uses the
+        // terrain's `capital` on its sides even when a building (containers)
+        // sits on top of it — otherwise it falls through to `side`/`base` and
+        // shows the wrong face (e.g. the ship hull's red waterline) right
+        // under the crates. Building cubes still use the full `total`.
+        const faceTotal = isTerrainCube ? terrainCubes : total;
+        let faces = pickFaceTextures(k, faceTotal, neighborMaxK, biomeTex);
+        // Ruina: el cubo INMEDIATAMENTE BAJO el capital roto (k = total-2)
+        // queda con su cara superior EXPUESTA al cielo por los huecos que dejan
+        // los muros parciales del capital. Como no es el cubo más alto del
+        // stack, pickFaceTextures le da top=null y emitRun acabaría poniendo el
+        // `side` (que a este nivel suele ser `base`, p.ej. ruina_base) en la
+        // tapa — se ve mal. Forzamos su tapa al `top` del bioma (ruina_top) para
+        // que esa "azotea" rota se vea como suelo, no como cara lateral.
+        const isRuinaUnderCapital = !isTerrainCube
+          && obj && obj.kind === 'ruina'
+          && k === total - 2
+          && buildingStoreys >= 2;
+        if (isRuinaUnderCapital) {
+          faces = { side: faces.side, top: biomeTex.top, bottom: faces.bottom };
+        }
         if (debug && isTerrainCube) {
           // Override total: en debug todo el terreno usa dbg_terrain plano.
           // Solo afecta cubos de terreno; los edificios mantienen su look.
@@ -855,6 +1004,29 @@ function buildMapText({ tilemap, wadKey, debug = false, phong = true }) {
           );
           for (const b of ruinaBrushes) detailBrushes.push(b);
           continue;  // saltamos la logica normal de extender/iniciar run.
+        }
+
+        // Caso especial: bevel del casco. Cada cubo de TERRENO se emite como
+        // un wedge (cubo achaflanado en una esquina) en vez de un cubo recto.
+        // Texturamos cada nivel con pickFaceTextures EXACTAMENTE como un cubo
+        // barco normal: caras enterradas → side, el cubo en neighborMaxK →
+        // base (la linea de flotacion roja), el mas alto → capital en los
+        // laterales + top en la cubierta, el mas bajo → bottom. Asi el bevel
+        // sigue las mismas reglas de cara que 'barco'.
+        if (isBevel && isTerrainCube) {
+          if (k === 0) { emitRun(run); run = null; }   // cerramos run pendiente
+          const wf = pickFaceTextures(k, terrainCubes, neighborMaxK, terrainBiomeTex);
+          const wSide = debug ? DBG_TEX.terrain : wf.side;
+          const wTop  = debug ? DBG_TEX.terrain : (wf.top ?? wf.side);
+          const wBot  = debug ? faces.bottom    : (wf.bottom ?? wf.side);
+          detailBrushes.push(_wedgeBrush(
+            { x0, y0, x1, y1,
+              bottomZ: cubeMinZ, topZ: cubeMaxZ,
+              corner: bevelCorner },
+            wSide,
+            { topTex: wTop, bottomTex: wBot },
+          ));
+          continue;  // este cubo de terreno ya emitido como wedge.
         }
 
         // Can we stretch the previous run to include this cube? Need
@@ -1384,10 +1556,10 @@ function buildMapText({ tilemap, wadKey, debug = false, phong = true }) {
         // del primer path_corner de esa ruta es 'patrol_<id>_0'.
         out.push(`"target" "patrol_${e.target}_0"`);
       }
-      // info_enemy_slot lleva campos extra: enemy_kind y activate_day.
-      // El runtime QC los usa para decidir qué spawnea y a partir de qué
-      // día se puede activar.
       if (e.kind === 'info_enemy_slot') {
+        // info_enemy_slot lleva campos extra: enemy_kind y activate_day.
+        // El runtime QC los usa para decidir qué spawnea y a partir de qué
+        // día se puede activar (gating por día + azar).
         const slotKind = (typeof e.enemyKind === 'string' && e.enemyKind)
           ? e.enemyKind
           : 'monster_aag';
@@ -1395,6 +1567,12 @@ function buildMapText({ tilemap, wadKey, debug = false, phong = true }) {
           Math.round(Number(e.activateDay) || 1)));
         out.push(`"enemy_kind" "${slotKind}"`);
         out.push(`"activate_day" "${activateDay}"`);
+      } else {
+        // A directly-placed monster is a DELIBERATE fixed defence: mark it
+        // from_slot=1 so Purge_HandPlacedMonsters keeps it (the purge only
+        // exists to wipe stray test monsters that have no from_slot). It
+        // spawns active immediately, no day gating — guaranteed to appear.
+        out.push(`"from_slot" "1"`);
       }
       out.push('}');
     }
@@ -1461,7 +1639,111 @@ function buildMapText({ tilemap, wadKey, debug = false, phong = true }) {
     if (cloudN > 0) info.push(`clouds: ${cloudN} cloud entities in ${CLOUD_CLUSTERS}+${CLOUD2_CLUSTERS} clusters (models b_cloud0..4, non-solid)`);
   }
 
+  // ---------- olas rompiendo (wave_decor) ----------
+  // Decoración estática sobre el agua, a 1 celda de la costa, orientada para que
+  // el avance de la espuma apunte hacia la tierra. Siembra determinista.
+  // IMPORTANTE: en modo strict-area el sellado del mundo (paredes/bedrock/agua)
+  // SOLO cubre el rectángulo de celdas del playArea. Una ola fuera de ese
+  // rectángulo cae en espacio NO sellado → leak. Pasamos los límites de celda
+  // del área para que emitWaveEntities NO siembre fuera.
+  {
+    const waveN = emitWaveEntities({
+      out, heights, cols, rows, cellSize, gridHalfX, gridHalfY,
+      areaC0: strictArea ? pa.c0 : 0,
+      areaC1: strictArea ? pa.c1 : cols - 1,
+      areaR0: strictArea ? pa.r0 : 0,
+      areaR1: strictArea ? pa.r1 : rows - 1,
+    });
+    if (waveN > 0) info.push(`waves: ${waveN} wave_decor entities (water, 1 cell from shore, facing land)`);
+  }
+
   return { text: out.join('\n') + '\n', warnings, info };
+}
+
+/**
+ * Siembra olas (wave_decor) sobre el agua a EXACTAMENTE 1 celda de la costa
+ * (distancia BFS = 1 desde tierra: el agua que toca la orilla), orientadas para
+ * que el AVANCE de la espuma apunte hacia la tierra. Determinista (PRNG con
+ * semilla fija) para que las entidades no cambien entre compilaciones. La ola
+ * se coloca en el centro de la celda, un poco por encima de la superficie del
+ * agua, con el yaw hacia la celda de tierra más cercana.
+ */
+const WAVE_SEED        = 0x5EA0FA;  // semilla fija del PRNG de olas
+const WAVE_CHANCE      = 0.45;      // prob. de sembrar ola en una celda válida
+// Altura del agua = SEA_LEVEL_Z - WATER_DROP (-8). La ola va un poco POR ENCIMA
+// para que se vea bien y no haya z-fighting con la superficie.
+const WAVE_SURFACE_Z   = (SEA_LEVEL_Z - 8) + 4;
+function emitWaveEntities({ out, heights, cols, rows, cellSize, gridHalfX, gridHalfY,
+                            areaC0 = 0, areaC1 = cols - 1, areaR0 = 0, areaR1 = rows - 1 }) {
+  const SEA = SEA_LEVEL_H;
+  const N = cols * rows;
+  const water = (c, r) => heights[r * cols + c] < SEA;
+  // Solo sembramos olas en celdas DENTRO del área jugable sellada, y con 1
+  // celda de margen hacia dentro (no en el borde mismo del área) para que la
+  // ola no roce el plano de las paredes/sellado del recorte. Fuera de aquí no
+  // hay geometría de sellado → cualquier entidad provocaría un leak.
+  const inSealedArea = (c, r) =>
+    c >= areaC0 + 1 && c <= areaC1 - 1 && r >= areaR0 + 1 && r <= areaR1 - 1;
+
+  // BFS de distancia a tierra (igual que emitWaterBands): 0 = tierra,
+  // 1 = agua tocando tierra, 2 = segunda franja, ...
+  const dist = new Int32Array(N).fill(-1);
+  const queue = [];
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      if (!water(c, r)) { dist[r * cols + c] = 0; queue.push(r * cols + c); }
+  if (queue.length === 0) return 0;  // mapa sin tierra → sin olas
+  let head = 0;
+  while (head < queue.length) {
+    const i = queue[head++];
+    const c = i % cols, r = (i - c) / cols, d = dist[i];
+    for (const [nc, nr] of [[c, r - 1], [c, r + 1], [c - 1, r], [c + 1, r]]) {
+      if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+      const j = nr * cols + nc;
+      if (dist[j] !== -1) continue;
+      dist[j] = d + 1;
+      queue.push(j);
+    }
+  }
+
+  const rand = mulberry32(WAVE_SEED);
+  const cellCX = (c) => -gridHalfX + c * cellSize + cellSize / 2;
+  const cellCY = (r) => -gridHalfY + ((rows - 1) - r) * cellSize + cellSize / 2;
+  let n = 0;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (dist[r * cols + c] !== 1) continue;   // solo el agua que toca la orilla
+      if (!inSealedArea(c, r)) continue;         // FUERA del área sellada → leak garantizado
+      if (rand() >= WAVE_CHANCE) continue;       // siembra aleatoria
+
+      // Vecino con menor dist = hacia la costa. Acumula la dirección hacia
+      // todos los vecinos más cercanos para apuntar al "centro" de la tierra.
+      // A dist 1 los vecinos de tierra tienen dist 0.
+      let bestD = 2, dirX = 0, dirY = 0;
+      const nbrs = [[c, r - 1, 0, +1], [c, r + 1, 0, -1], [c - 1, r, -1, 0], [c + 1, r, +1, 0]];
+      for (const [nc, nr, vx, vy] of nbrs) {
+        if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+        const nd = dist[nr * cols + nc];
+        if (nd < 0) continue;
+        if (nd < bestD) { bestD = nd; dirX = vx; dirY = vy; }
+        else if (nd === bestD) { dirX += vx; dirY += vy; }
+      }
+      if (dirX === 0 && dirY === 0) continue;    // sin dirección clara
+
+      // Yaw Quake hacia la tierra: 0=+X (Este), 90=+Y (Norte).
+      let yaw = Math.round(Math.atan2(dirY, dirX) * 180 / Math.PI);
+      yaw = ((yaw % 360) + 360) % 360;
+
+      out.push('{');
+      out.push('"classname" "wave_decor"');
+      out.push(`"origin" "${Math.round(cellCX(c))} ${Math.round(cellCY(r))} ${Math.round(WAVE_SURFACE_Z)}"`);
+      out.push(`"angle" "${yaw}"`);
+      out.push('}');
+      n++;
+    }
+  }
+  return n;
 }
 
 /**
@@ -1477,7 +1759,7 @@ function buildMapText({ tilemap, wadKey, debug = false, phong = true }) {
  * level) so the sea is a solid volume; only the texture varies by band.
  */
 function emitWaterBands({ out, heights, cols, rows, cellSize, gridHalfX, gridHalfY,
-                          xMin, xMax, yMin, yMax, waterMinZ, waterMaxZ }) {
+                          xMin, xMax, yMin, yMax, waterMinZ, waterMaxZ, decorations }) {
   const shades = WATER_SHADES;
   const deep = shades[shades.length - 1];
   const SEA = SEA_LEVEL_H;
@@ -1556,6 +1838,29 @@ function emitWaterBands({ out, heights, cols, rows, cellSize, gridHalfX, gridHal
       runStart = c; runShade = sh;
     }
     flush(cols - 1);
+  }
+
+  // -- Agua en las celdas con BEVEL ('wedge'). --
+  // Una celda con bevel es "tierra" (dist 0) y por eso el bucle de arriba no
+  // emite agua en ella. Pero el chaflan del casco deja un hueco triangular
+  // abierto que, bajo el nivel del mar, debe verse como agua (el usuario
+  // pidio: "a la altura del agua tenga agua"). Emitimos un cubo de agua que
+  // llena TODO el footprint de la celda; el casco solido (wedge) ocupa su
+  // parte y el agua solo se ve en el hueco del chaflan. Usamos el tono de
+  // costa mas claro (shades[0]) porque estas celdas estan en el borde.
+  if (decorations) {
+    const coastTex = shades[0];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const code = decorations[r * cols + c];
+        if (!code) continue;
+        const deco = decodeDeco(code);
+        if (!deco || deco.kind !== 'wedge') continue;
+        const bx0 = cellX0(c), bx1 = bx0 + cellSize;
+        const by0 = cellY0(r), by1 = by0 + cellSize;
+        pushWater(bx0, bx1, by0, by1, coastTex);
+      }
+    }
   }
 }
 

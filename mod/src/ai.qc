@@ -28,7 +28,9 @@ void() movetarget_f =
 	self.goalentity = find(world, targetname, self.target);
 	self.solid = SOLID_TRIGGER;
 	self.touch = t_movetarget;
-	setmodel(self, "progs/s_bubble.spr");
+	// El path_corner es un trigger invisible. Antes le poniamos un sprite de
+	// burbuja (s_bubble.spr) para ver las rutas en depuracion; ya no hace
+	// falta, asi que setsize sin setmodel — sigue colisionando, sin verse.
 	setsize(self, '-8 -8 -8', '8 8 8');
 };
 

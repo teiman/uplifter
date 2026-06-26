@@ -46,6 +46,27 @@ float STAT_HUD_INTRO      = 50;
 // Code selects the text: 0 = none, 1 = "fly to the marked pickup", 2 = "pick
 // up survivors", 3 = "RETURN — deliver survivors to the ship".
 float STAT_HUD_MISSION    = 51;
+// Day's delivery quota (g_wave_quota), shown in the day-briefing curtain.
+float STAT_HUD_QUOTA      = 52;
+// Absolute world yaw (deg) toward the active objective, for the compass
+// marker. Only meaningful when STAT_HUD_OBJKIND >= 0. (53/54 = ammo2/ammo3.)
+float STAT_HUD_OBJ_BEARING = 55;
+// Sun lens flare: the sun direction projected on the player's view axes plus
+// an occlusion flag. CSQC can't read the camera or traceline in this engine,
+// so the server computes these each PreThink. See Sun_FlareTick (objectives).
+float STAT_HUD_SUN_FWD     = 56;
+float STAT_HUD_SUN_RT      = 57;
+float STAT_HUD_SUN_UP      = 58;
+float STAT_HUD_SUN_VIS     = 59;
+// End-of-life summary, shown by CSQC while the player is dead. Civilians saved
+// (delivered) this run, distance flown (in units), and helis (lives) left.
+// STAT_HUD_DEAD: 1 while the player is dead (drives the summary overlay).
+float STAT_HUD_SAVED       = 60;
+float STAT_HUD_DISTANCE    = 61;
+float STAT_HUD_HELIS       = 62;
+float STAT_HUD_DEAD        = 63;
+float STAT_HUD_SHOTS       = 64;
+float STAT_HUD_GAMEWON     = 65;
 float EV_FLOAT = 2;
 void(float num, float type, .__variant fld) clientstat = #232;
 
@@ -63,6 +84,9 @@ void(float num, float type, .__variant fld) clientstat = #232;
 .float star_shoot_cooldown;
 // Next time the "high flight" star tick fires.
 .float star_highflight_next;
+// Next time the radar/cloud notoriety tick may fire (every 5s): +1 star while
+// painted by radar, -1 star while hidden in a cloud. See Stars_RadarTick.
+.float star_radar_next;
 // Cloud stealth. A cloud_trigger refreshes in_cloud_until every frame the
 // heli is inside a cloud volume; while in_cloud_until >= time the heli is
 // "in cloud". cloud_hide_at is when stealth becomes EFFECTIVE: set on entry
@@ -70,6 +94,25 @@ void(float num, float type, .__variant fld) clientstat = #232;
 // time >= cloud_hide_at. (See stars.qc, misc.qc cloud_trigger.)
 .float in_cloud_until;
 .float cloud_hide_at;
+// Per-player passenger count (rescued civilians aboard). Declared here (not in
+// objectives.qc) so earlier-compiled files like day.qc can read it too.
+.float pax;
+// Run stats for the end-of-life summary (CSQC reads these as stats):
+//   civ_saved      = civilians delivered to a ship/hospital this run.
+//   dist_travelled = total distance flown (Quake units), summed each PreThink.
+.float civ_saved;
+.float dist_travelled;
+.float shots_fired;
+// 1 while the player is dead → CSQC shows the end-of-life summary overlay.
+.float hud_dead;
+// 1 when the representative is delivered → CSQC shows mission accomplished.
+.float hud_gamewon;
+// Anti-bogostick (debounce) para el respawn al morir: solo se arma a 1
+// cuando el boton de disparo esta SUELTO. Una vez armado, el siguiente
+// click (flanco de pulsado) respawnea. Asi, si mueres con el boton ya
+// pulsado, primero hay que soltarlo y luego volver a hacer click — no se
+// respawnea por un click "heredado" de antes de morir.
+.float respawn_armed;
 // Scrap inventory: integer count. Each piece picked up adds 1. Healing
 // consumes 1 per heal tick. Respawn snaps the count back to SCRAP_RESPAWN_COUNT.
 .float scrap;
@@ -87,6 +130,14 @@ void(float num, float type, .__variant fld) clientstat = #232;
 .float obj_dotfwd;   // dot(toTarget, viewForward) — >0.5 = on screen
 .float obj_dotrgt;   // dot(toTarget, viewRight)  — sign = left/right
 .float obj_kind;     // 0=pickup, 1=ship, -1=none
+.float obj_bearing;  // absolute world yaw (deg) toward the target, for the
+                     // compass marker. Valid only when obj_kind >= 0.
+// Sun lens-flare data, broadcast each PreThink (see Sun_FlareTick). The sun
+// direction dotted with the player's view axes, + a visibility flag.
+.float sun_fwd;
+.float sun_rt;
+.float sun_up;
+.float sun_vis;
 // CSQC DANGER banner state, broadcast every PreThink. See STAT_HUD_DANGER.
 .float hud_danger;
 // CSQC mission-line code, broadcast every PreThink. See STAT_HUD_MISSION.
@@ -94,6 +145,16 @@ void(float num, float type, .__variant fld) clientstat = #232;
 // Current day number mirrored to the player so it can be sent as a stat to
 // CSQC (the HUD shows a "DAY n" badge). Set each PreThink from g_day.
 .float hud_day;
+// Day's delivery quota mirrored to the player for the briefing curtain.
+.float hud_quota;
+.float hud_ammo2;       // hellfire count (helo), siempre visible en HUD
+.float hud_ammo3;       // flare count (helo), siempre visible en HUD
+.float flare_regen_time; // momento en que toca regenerar la siguiente flare
+// Ametralladora: cuando ammo_auto llega a 0 fijamos aquí el momento en que se
+// recargará a tope (now + 3s). 0 = no está en recarga. Contador de balas
+// disparadas para intercalar una trazadora cada N balas.
+.float auto_reload_time;
+.float auto_shotcount;
 // Set by monster_rad whenever it has lock on the player. CSQC reads this
 // (indirectly via hud_danger) to colour the DANGER banner red. The 1.5s
 // grace beyond the radar's own 1Hz tick avoids the banner flickering
@@ -119,6 +180,10 @@ void(float num, float type, .__variant fld) clientstat = #232;
 .float hosp_next_release;   // próximo time en el que se libera 1 plaza
 .float hosp_kind;           // 0=barco, 1=hospital en tierra
 .float hosp_destroyed;      // 1 si Goliath lo derribó este día
+.entity hosp_noentry;       // sprite "prohibido" mostrado cuando está lleno/destruido
+// Bombing_launcher: target rojo en tierra que marca la zona de impacto de la
+// andanada. Vive un tiempo fijo y se auto-borra (ver bomb_target_think).
+.entity bomb_target;
 // CSQC mirror del newscast del día (0 = ninguno, 1..5 = día). Lo escribe
 // el sistema de newscast en day.qc (News_Show / News_Tick).
 .float hud_intro;
@@ -146,6 +211,10 @@ void(float num, float type, .__variant fld) clientstat = #232;
 .float unstealth_finished;
 .float missileview_on;
 .float lives;
+// Reparacion en hospital/barco: instante del proximo tic de reparacion. Se
+// usa en el vehiculo (client.enemy) mientras esta posado dentro del radio de
+// un punto de descarga. Sube health hacia max_health poco a poco.
+.float repair_next;
 .float accesslvl;
 .float accessparm;
 .float twonumbers;
@@ -155,6 +224,15 @@ void(float num, float type, .__variant fld) clientstat = #232;
 .entity tur2;
 .entity radiuskiller;
 .entity lastmiss;
+// Swarm pilot: rescate fuera del mapa. swarm_home = origen donde nacio
+// (para teleportar al mas lejano del borde); swarm_next = lista enlazada de
+// pilots vivos. g_swarm_head es la cabeza de la lista.
+.vector swarm_home;
+.entity swarm_next;
+// Altitud de crucero individual: asignada al nacer con scatter aleatorio
+// alrededor de SWARM_CRUISE_ALT, para que no vuelen todos a la misma cota.
+.float swarm_cruise_alt;
+entity g_swarm_head;
 float FALSE;
 float TRUE    = 1;
 float FL_FLY    = 1;

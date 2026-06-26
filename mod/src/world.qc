@@ -141,11 +141,25 @@ void() worldspawn =
 	clientstat(STAT_HUD_OBJ_DOTFWD, EV_FLOAT, obj_dotfwd);
 	clientstat(STAT_HUD_OBJ_DOTRGT, EV_FLOAT, obj_dotrgt);
 	clientstat(STAT_HUD_OBJKIND,    EV_FLOAT, obj_kind);
+	clientstat(STAT_HUD_OBJ_BEARING, EV_FLOAT, obj_bearing);
+	clientstat(STAT_HUD_SUN_FWD,    EV_FLOAT, sun_fwd);
+	clientstat(STAT_HUD_SUN_RT,     EV_FLOAT, sun_rt);
+	clientstat(STAT_HUD_SUN_UP,     EV_FLOAT, sun_up);
+	clientstat(STAT_HUD_SUN_VIS,    EV_FLOAT, sun_vis);
 	clientstat(STAT_HUD_DANGER,     EV_FLOAT, hud_danger);
 	clientstat(STAT_HUD_MISSION,    EV_FLOAT, hud_mission);
 	clientstat(STAT_HUD_DAY,        EV_FLOAT, hud_day);
+	clientstat(STAT_HUD_QUOTA,      EV_FLOAT, hud_quota);
 	clientstat(STAT_HUD_UPGRADES,   EV_FLOAT, upgrades);
 	clientstat(STAT_HUD_INTRO,      EV_FLOAT, hud_intro);
+	clientstat(53,                  EV_FLOAT, hud_ammo2);
+	clientstat(54,                  EV_FLOAT, hud_ammo3);
+	clientstat(STAT_HUD_SAVED,      EV_FLOAT, civ_saved);
+	clientstat(STAT_HUD_DISTANCE,   EV_FLOAT, dist_travelled);
+	clientstat(STAT_HUD_HELIS,      EV_FLOAT, lives);
+	clientstat(STAT_HUD_DEAD,       EV_FLOAT, hud_dead);
+	clientstat(STAT_HUD_SHOTS,      EV_FLOAT, shots_fired);
+	clientstat(STAT_HUD_GAMEWON,    EV_FLOAT, hud_gamewon);
 	if ((self.model == "maps/e1m8.bsp"))
 	{
 		cvar_set("sv_gravity", "100");
@@ -179,6 +193,13 @@ void() worldspawn =
 	precache_sound("demon/dland2.wav");
 	precache_sound("misc/h2ohit1.wav");
 	precache_sound("items/itembk2.wav");
+	// Loot boxes dropped by destroyed vehicles (drop_vehicle_loot → item_health
+	// / item_rockets). These spawn at RUNTIME, so their assets MUST be
+	// precached here in worldspawn — precache_* outside a spawn function is a
+	// fatal QC error ("Precache can only be done in spawn functions").
+	precache_sound("items/health1.wav");
+	precache_model("progs/box1.mdl");
+	precache_sound("items/r_item1.wav");
 	precache_sound("player/land.wav");
 	precache_sound("player/land2.wav");
 	precache_sound("misc/talk.wav");
@@ -222,6 +243,19 @@ void() worldspawn =
 	precache_model("progs/gib3.mdl");
 	precache_model("progs/s_bubble.spr");
 	precache_model("progs/s_explod.spr");
+	precache_model("progs/worldtext.spr");   // billboard text labels (worldtext entity)
+	precache_model("progs/birds.spr");       // decorative bird flock (monster_birds_flock)
+	precache_model("progs/noentry.spr");     // "prohibido" sobre hospital/barco lleno o destruido
+	// Puffs de la explosión de artillería (ebomb): 4 grises en círculo + 3 de
+	// fuego ascendentes. Se spawnean en runtime (bomb_rocket_touch), así que el
+	// precache tiene que estar aquí (en spawn function) o el motor petaría.
+	precache_model("progs/puff_g.spr");
+	precache_model("progs/puff_g2.spr");
+	precache_model("progs/puff_g3.spr");
+	precache_model("progs/puff_g4.spr");
+	precache_model("progs/puff_g5.spr");
+	precache_model("progs/puff_fire.spr");
+	precache_model("progs/target_ring.spr");  // diana roja en tierra (zona de impacto de la andanada)
 	precache_model("progs/bolt.mdl");
 	precache_model("progs/bolt2.mdl");
 	precache_model("progs/bolt3.mdl");

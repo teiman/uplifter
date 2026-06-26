@@ -242,6 +242,16 @@ export const PALETTE = [
   { id: 'curve-out-E', label: 'curve-out E', tex: texturesFor('curve-out-E'), color: '#3a3a3a' },
   { id: 'curve-out-S', label: 'curve-out S', tex: texturesFor('curve-out-S'), color: '#3a3a3a' },
   { id: 'curve-out-O', label: 'curve-out O', tex: texturesFor('curve-out-O'), color: '#3a3a3a' },
+  // hlanding — helipad corner tile. Works exactly like curve-out (4 cardinal
+  // rotations, painting cycles N→E→S→O). The art is hand-painted per
+  // direction in assets/textures/hlanding-{N,E,S,O}/top.png. APPEND-ONLY.
+  { id: 'hlanding-N', label: 'hlanding N', tex: texturesFor('hlanding-N'), color: '#2e3a3a' },
+  { id: 'hlanding-E', label: 'hlanding E', tex: texturesFor('hlanding-E'), color: '#2e3a3a' },
+  { id: 'hlanding-S', label: 'hlanding S', tex: texturesFor('hlanding-S'), color: '#2e3a3a' },
+  { id: 'hlanding-O', label: 'hlanding O', tex: texturesFor('hlanding-O'), color: '#2e3a3a' },
+  // Ship block: TOP = steel deck (hatch covers), SIDES = riveted hull plating
+  // with a red waterline. A plain terrain tile like 'arena'. APPEND-ONLY.
+  { id: 'barco', label: 'barco', tex: texturesFor('barco'), color: '#6a7078' },
 ];
 
 /**
@@ -290,6 +300,14 @@ export const SPECIAL_OBJECTS = [
     footprint: 0.9, isBuilding: true, tex: texturesFor('cuartel') },
   { kind: 'bunker',  label: 'bunker',  glyph: '◧', color: '#7a7a7a',
     footprint: 0.8, isBuilding: true, tex: texturesFor('bunker') },
+  // Shipping containers: a building stacked 2-4 high like casa, but each
+  // CUBE gets a different colour. mapWriter chooses the colour per cube from
+  // the cell position (2-cell bands) + level, reading `containerColors` (the
+  // list of colour-texture ids, each a cont<N>/ folder of 5 PNG faces from
+  // gen-contenedores-textures.js). `tex` here is just the preview swatch.
+  { kind: 'contenedores', label: 'contenedores', glyph: '▦', color: '#2e5a8a',
+    footprint: 1, isBuilding: true, tex: texturesFor('cont0'),
+    containerColors: ['cont0', 'cont1', 'cont2', 'cont3', 'cont4', 'cont5'] },
   { kind: 'lampara', label: 'lampara', glyph: '✦', color: '#f0d870',
     heightU: 192, footprint: 0.18, tex: 'metal1_1',
     light: { offsetZ: 192, intensity: 350, color: '255 240 200' } },
@@ -336,16 +354,23 @@ export const ENEMY_TYPES = [
   // SwarmPlane: boid-flocking, persigue al heli sin ruta. Usa
   // DEFAULT_FLIGHT_HEIGHT para spawnear a una altura sensata.
   { kind: 'monster_swarm_pilot', label: 'monster_swarm_pilot', glyph: '✦', color: '#d06030', needsPath: false, aerial: true },
+  // Bombing launcher: indestructible ambient hazard. Lobs bursts of slow
+  // ballistic rockets at random city pickups. Stationary, no path.
+  { kind: 'bombing_launcher', label: 'bombing launcher', glyph: '💣', color: '#e05028', needsPath: false, aerial: false },
+  // Decorative bird flock: flies/roams like the swarm boids but pacific and
+  // non-solid (the heli passes through). No path; spawns at flight height.
+  { kind: 'monster_birds_flock', label: 'birds', glyph: '🕊', color: '#e8e8f0', needsPath: false, aerial: true },
   // ---- gameplay entities (no enemigos: pickup points y barco) ----
-  // info_scrap: pieza de chatarra que cura al recogerla; respawna a los
-  // 120s. Coloca varias por el mapa.
-  { kind: 'info_scrap',  label: 'info_scrap',  glyph: '✪', color: '#c0c060', needsPath: false, aerial: false, gameplay: true },
   // info_pickup: zona de rescate. El game elige una random al inicio del
   // mapa; al aterrizar dentro, spawneean civiles que suben al heli.
   { kind: 'info_pickup', label: 'info_pickup', glyph: '◉', color: '#60c060', needsPath: false, aerial: false, gameplay: true },
   // info_ship: el barco al que vuelves a descargar pasajeros. Cap 12,
   // ritmo 10s, +250 cr/pax. Mapa típico: 3 barcos en mar abierto.
   { kind: 'info_ship',   label: 'info_ship',   glyph: '⚓', color: '#4070c0', needsPath: false, aerial: false, gameplay: true },
+  // info_ship_goal: punto de reunión en la cubierta hacia el que CORREN los
+  // pasajeros tras desembarcar del heli (que aterriza en info_ship). Colócalo
+  // en la cubierta, apartado del punto de aterrizaje.
+  { kind: 'info_ship_goal', label: 'ship goal', glyph: '⚑', color: '#40a0c0', needsPath: false, aerial: false, gameplay: true },
   // info_hospital: hospital en tierra (Davenport). Cap 6, ritmo 4s,
   // +400 cr/pax. Más rápido pero vulnerable (puede caer durante la sesión).
   // Mapa típico: 2 hospitales dentro de Davenport.
@@ -361,6 +386,16 @@ export const ENEMY_TYPES = [
   // sistema decide cuáles spawnean. Configura el tipo en .enemy_kind
   // (monster_aag/sam/rad) y el día mínimo en .activate_day.
   { kind: 'info_enemy_slot', label: 'info_enemy_slot', glyph: '◇', color: '#909090', needsPath: false, aerial: false, gameplay: true },
+  // counterforces_origin: punto de spawn de unidades Davenport aliadas al
+  // jugador. Coloca uno o varios; el sistema elige el más cercano al objetivo.
+  { kind: 'counterforces_origin', label: 'counterforces', glyph: '⊛', color: '#50c878', needsPath: false, aerial: false, gameplay: true },
+  // forces_attack_origin: punto de spawn de ENEMIGOS terrestres (tanques)
+  // hostiles al jugador. Espejo de counterforces_origin, pero atacan.
+  { kind: 'forces_attack_origin', label: 'forces attack', glyph: '⊗', color: '#c83232', needsPath: false, aerial: false, gameplay: true },
+  // Props decorativos: aviones aparcados (solo de mirar, makestatic al iniciar).
+  // El mapper los rota con .angles; por defecto quedan en diagonal.
+  { kind: 'prop_plane_a10',    label: 'A-10 (parked)',  glyph: '✈', color: '#8a8f96', needsPath: false, aerial: false },
+  { kind: 'prop_plane_parked', label: 'plane (parked)', glyph: '✈', color: '#6f7a86', needsPath: false, aerial: false },
 ];
 
 export const ENEMY_BY_KIND = new Map(ENEMY_TYPES.map(e => [e.kind, e]));
@@ -434,8 +469,17 @@ export const BRUSH_PALETTE = [
   // `cycle` and behave as before.
   ...PALETTE
     .filter(p => !/^curve-out-[NESO]$/.test(p.id))
+    .filter(p => !/^hlanding-[NESO]$/.test(p.id))
     .map(p => ({ type: 'texture', id: p.id, label: p.label, color: p.color })),
   { type: 'texture', id: 'curve-out-N', label: 'curve', color: '#3a3a3a', cycle: 'curve-out' },
+  { type: 'texture', id: 'hlanding-N', label: 'hlanding', color: '#2e3a3a', cycle: 'hlanding' },
+  // Bevel del casco: pinta una decoracion 'wedge' (chaflan vertical de
+  // esquina) sobre la celda SIN cambiar su textura — la celda conserva el
+  // tile que ya tenga ('barco'). Cada click rota la esquina cortada
+  // (NE→SE→SO→NO) bajo el tool 'paint', como los cycle de textura. Bajo el
+  // nivel del mar el agua global rellena el chaflan, asi que la esquina
+  // "tiene agua a la altura del agua" y se comporta como barco arriba.
+  { type: 'deco', id: 'wedge', label: 'bevel', color: '#566', cycle: 'wedge', glyph: '◣' },
   ...SPECIAL_OBJECTS.map(o => ({ type: 'object', id: o.kind, label: o.label, color: o.color, glyph: o.glyph })),
   { type: 'spawn', id: 'spawn', label: 'Spawn', color: '#ff5050', glyph: '♟' },
   // Enemigos. Cada uno con su categoria (needsPath) para que la LeftPanel

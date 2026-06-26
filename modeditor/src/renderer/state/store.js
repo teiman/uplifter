@@ -3,12 +3,14 @@ import {
   makeEmptyTilemap, deserialiseTilemap, BRUSH_PALETTE, PALETTE, SEA_LEVEL_H,
   HOUSE_STOREYS_MIN, HOUSE_STOREYS_MAX, MESH_CHUNK_SIZE,
   CELL_SIZE, HEIGHT_UNIT,
-  encodeDeco,
+  encodeDeco, decodeDeco,
   OBJECT_BY_KIND,
   ENEMY_BY_KIND,
 } from '../../shared/types.mjs';
 import { generateCityAt } from './generators/city.js';
 import { generateMilitaryAt } from './generators/military.js';
+import { generateContainerShipAt } from './generators/ship_container.js';
+import { generateWarshipAt } from './generators/ship_warship.js';
 
 /**
  * Minimal external store: mutable singleton + subscriber set. Components
@@ -57,6 +59,16 @@ const state = {
   // Shape: { cols, rows, heights: Int16Array, textures: Int8Array,
   //          objects: Array(cols*rows), smoothing: Array(cols*rows) }
   clipboard: null,
+  // Paste mode: when true, a pasted prop's heights are SHIFTED so its lowest
+  // cell sits on the terrain height under the cursor (instead of using the
+  // prop's absolute heights, which would carve a tall building into the bottom
+  // of an abyss when dropped on a mountain). Off = paste absolute heights.
+  pasteRelativeHeight: true,
+  // Bucket-fill "ignore height changes": when true, the paint bucket flows
+  // across GENTLE slopes (a step of at most 1 block between adjacent cells, so
+  // ramps fill through) but still stops at cliffs (a jump > 1 block). When
+  // false, it only spreads across cells of the exact same height (classic).
+  bucketIgnoreHeight: false,
   // Día seleccionado en la solapa "Día" (1..5). Por defecto 1 para que el
   // checklist tenga algo que mostrar al entrar.
   daySelected: 1,
@@ -178,6 +190,21 @@ export function getTilemap()        { return state.tilemap; }
 export function getBrushIdx()       { return state.selectedBrushIdx; }
 export function getMode()           { return state.mode; }
 export function getTool()           { return state.tool; }
+
+// Ship generator size: 'small' | 'medium' | 'large' | 'giant'
+let genShipSize = 'medium';
+export function getGenShipSize()    { return genShipSize; }
+export function setGenShipSize(sz)  { genShipSize = sz; notify(); }
+
+// Ship orientation: 'h' | 'v' | 'rnd'
+let genShipOrientation = 'rnd';
+export function getGenShipOrientation()   { return genShipOrientation; }
+export function setGenShipOrientation(o)  { genShipOrientation = o; notify(); }
+
+// Ship deck height (tilemap units). Cells below this are raised to it.
+let genShipDeckH = 0;
+export function getGenShipDeckH()         { return genShipDeckH; }
+export function setGenShipDeckH(h)        { genShipDeckH = Math.round(h); notify(); }
 /** Derived: the main canvas view ('2d' or '3d') is dictated by mode.
  *  Everything that's not 3D is a 2D-editing mode. */
 export function getView() {
@@ -199,6 +226,20 @@ export function getRectTargetH()    { return state.rectTargetH; }
 export function getClipboard()      { return state.clipboard; }
 export function getIsoYawIdx()      { return state.isoYawIdx; }
 export function getShow2dDebug()    { return state.show2dDebug; }
+export function getPasteRelativeHeight() { return state.pasteRelativeHeight; }
+export function setPasteRelativeHeight(v) {
+  const next = !!v;
+  if (state.pasteRelativeHeight === next) return;
+  state.pasteRelativeHeight = next;
+  notify();
+}
+export function getBucketIgnoreHeight() { return state.bucketIgnoreHeight; }
+export function setBucketIgnoreHeight(v) {
+  const next = !!v;
+  if (state.bucketIgnoreHeight === next) return;
+  state.bucketIgnoreHeight = next;
+  notify();
+}
 
 export function setShow2dDebug(v) {
   const next = !!v;
@@ -1077,11 +1118,11 @@ export function setEnemyKind(id, kind) {
 
 /** Return the storeys count of any 4-connected neighbouring house, or
  *  null if none exists. Used to make contiguous houses share a height. */
-function houseStoreysFromNeighbours(t, col, row) {
+function houseStoreysFromNeighbours(t, col, row, kind = 'casa') {
   const check = (cc, rr) => {
     if (cc < 0 || cc >= t.cols || rr < 0 || rr >= t.rows) return null;
     const o = t.objects[rr * t.cols + cc];
-    return (o && o.kind === 'casa' && typeof o.storeys === 'number') ? o.storeys : null;
+    return (o && o.kind === kind && typeof o.storeys === 'number') ? o.storeys : null;
   };
   return check(col - 1, row) ?? check(col + 1, row) ?? check(col, row - 1) ?? check(col, row + 1);
 }
@@ -1115,7 +1156,7 @@ function applyPaintAtCell(col, row, { toggleObject } = { toggleObject: true }) {
       const curIdx = t.textures[i];
       const curPal = curIdx >= 0 ? PALETTE[curIdx] : null;
       const curId = curPal?.id;
-      const m = curId ? curId.match(/^(curve-(?:out|in))-([NESO])$/) : null;
+      const m = curId ? curId.match(/^(curve-(?:out|in)|hlanding)-([NESO])$/) : null;
       if (m && m[1] === brush.cycle) {
         // Same family — cycle to next dir, unless this cell was
         // already touched in this stroke.
@@ -1138,6 +1179,34 @@ function applyPaintAtCell(col, row, { toggleObject } = { toggleObject: true }) {
     // visible cube. Use Altura tools to submerge or raise further.
     if (t.textures[i] !== palIdx) { t.textures[i] = palIdx; changed = true; }
     if (t.heights[i] < SEA_LEVEL_H) { t.heights[i] = SEA_LEVEL_H; changed = true; }
+  } else if (brush.type === 'deco') {
+    // Decoracion de forma (bevel del casco). NO toca la textura de la
+    // celda — conserva el tile que ya tenga ('barco'). Guarda un 'wedge'
+    // en t.decorations[i] con la esquina cortada. Como los cycle de
+    // textura: bajo el tool 'paint', un click fresco sobre una celda que
+    // YA tiene el bevel rota la esquina (dir 0→1→2→3→0 = NE→SE→SO→NO); un
+    // click sobre celda sin bevel lo planta en NE. En un drag la celda se
+    // congela tras el primer toque (no parpadea). Para borrar un bevel
+    // usa la goma/borrar (no este pincel). fillRect/flood plantan en NE.
+    const cur = decodeDeco(t.decorations[i]);
+    const curIsWedge = cur && cur.kind === 'wedge';
+    let dir = 0;                                      // por defecto: NE
+    if (brush.cycle && state.tool === 'paint' && curIsWedge) {
+      // Misma familia: rota a la siguiente esquina salvo que la celda ya
+      // se tocara en este trazo (drag) → congelar.
+      dir = state.strokeCells.has(i) ? cur.dir : ((cur.dir + 1) & 3);
+    }
+    if (brush.cycle && state.tool === 'paint') state.strokeCells.add(i);
+    const code = encodeDeco('wedge', dir);
+    if (t.decorations[i] !== code) { t.decorations[i] = code; changed = true; }
+    // El bevel necesita cuerpo de casco: si la celda esta sumergida la
+    // subimos a nivel del mar (como las texturas), y si no tiene textura
+    // le ponemos 'barco' por defecto para que el chaflan sea de barco.
+    if (t.heights[i] < SEA_LEVEL_H) { t.heights[i] = SEA_LEVEL_H; changed = true; }
+    if (t.textures[i] < 0) {
+      const barcoIdx = PALETTE.findIndex(p => p.id === 'barco');
+      if (barcoIdx >= 0) { t.textures[i] = barcoIdx; changed = true; }
+    }
   } else if (brush.type === 'spawn') {
     // Spawn is a singleton — each click relocates the single
     // info_player_start to the centre of the clicked cell. Z is
@@ -1159,8 +1228,10 @@ function applyPaintAtCell(col, row, { toggleObject } = { toggleObject: true }) {
       changed = true;
     } else if (!existing || existing.kind !== brush.id) {
       const newObj = { kind: brush.id };
-      if (brush.id === 'casa') {
-        const inherited = houseStoreysFromNeighbours(t, col, row);
+      if (brush.id === 'casa' || brush.id === 'contenedores') {
+        // Both stack 2-4 high; inherit from like-kind neighbours so a row of
+        // them lines up to the same height (a tidy container yard / terrace).
+        const inherited = houseStoreysFromNeighbours(t, col, row, brush.id);
         newObj.storeys = inherited != null
           ? inherited
           : (HOUSE_STOREYS_MIN + Math.floor(Math.random() * (HOUSE_STOREYS_MAX - HOUSE_STOREYS_MIN + 1)));
@@ -1227,14 +1298,30 @@ export function floodFillPaint(col, row) {
   const rows = t.rows;
   const origH = t.heights[i0];
   const origT = t.textures[i0];
+  const ignoreH = state.bucketIgnoreHeight;   // flow over ramps (≤1 step)
   const visited = new Uint8Array(cols * rows);
   const stack = [i0];
   visited[i0] = 1;
   let anyChanged = false;
+  // Undo snapshot: capture each touched cell's prior state BEFORE we paint it,
+  // so Ctrl-Z can restore the whole bucket-fill (texture + height + object +
+  // decoration). Pushed to the shared generator-undo stack.
+  const undoCells = [];
   while (stack.length > 0) {
     const i = stack.pop();
     const cc = i % cols;
     const cr = (i - cc) / cols;
+    // Height of the cell we're expanding FROM — used by the ramp check so a
+    // staircase (3→4→5…) flows but a cliff (3→6) doesn't.
+    const curH = t.heights[i];
+    // Snapshot this cell's pre-paint state once.
+    undoCells.push({
+      i, col: cc, row: cr,
+      tex: t.textures[i],
+      h:   t.heights[i],
+      obj: t.objects[i] ? { ...t.objects[i] } : null,
+      deco: t.decorations ? t.decorations[i] : 0,
+    });
     if (applyPaintAtCell(cc, cr, { toggleObject: false })) anyChanged = true;
     const neighbours = [i - 1, i + 1, i - cols, i + cols];
     const nCols = [cc - 1, cc + 1, cc, cc];
@@ -1244,12 +1331,35 @@ export function floodFillPaint(col, row) {
       if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
       const ni = neighbours[k];
       if (visited[ni]) continue;
-      if (t.heights[ni] !== origH || t.textures[ni] !== origT) continue;
+      // Must share the seed's texture, and stay above water, either way.
+      if (t.textures[ni] !== origT) continue;
+      if (t.heights[ni] < SEA_LEVEL_H) continue;
+      if (ignoreH) {
+        // Ramp mode: spread as long as the step to this neighbour is ≤1 block.
+        // A jump > 1 (cliff) stops the flow.
+        if (Math.abs(t.heights[ni] - curH) > 1) continue;
+      } else {
+        // Classic mode: same exact height only.
+        if (t.heights[ni] !== origH) continue;
+      }
       visited[ni] = 1;
       stack.push(ni);
     }
   }
-  if (anyChanged) notify();
+  if (anyChanged) {
+    pushGeneratorUndo({
+      undo: () => {
+        for (const u of undoCells) {
+          t.textures[u.i] = u.tex;
+          t.heights[u.i] = u.h;
+          t.objects[u.i] = u.obj;
+          if (t.decorations) t.decorations[u.i] = u.deco;
+        }
+        return undoCells.map(u => ({ col: u.col, row: u.row }));
+      },
+    });
+    notify();
+  }
   return anyChanged;
 }
 
@@ -1299,18 +1409,29 @@ export function removeBuildingsRect(c0, r0, c1, r1) {
   const cMax = Math.min(t.cols - 1, Math.max(c0, c1));
   const rMin = Math.max(0, Math.min(r0, r1));
   const rMax = Math.min(t.rows - 1, Math.max(r0, r1));
-  if (!t.objects) return 0;
   let removed = 0;
   for (let row = rMin; row <= rMax; row++) {
     for (let col = cMin; col <= cMax; col++) {
       const i = row * t.cols + col;
-      const obj = t.objects[i];
-      if (!obj) continue;
-      const meta = OBJECT_BY_KIND.get(obj.kind);
-      if (!meta || !meta.isBuilding) continue;
-      t.objects[i] = null;
-      markChunkDirty(col, row);
-      removed++;
+      let cellChanged = false;
+      // Edificios (casa, contenedores, torre...).
+      const obj = t.objects ? t.objects[i] : null;
+      if (obj) {
+        const meta = OBJECT_BY_KIND.get(obj.kind);
+        if (meta && meta.isBuilding) {
+          t.objects[i] = null;
+          cellChanged = true;
+        }
+      }
+      // Decoraciones de forma (bevel del casco / rampas pintadas a mano).
+      // El bevel se pinta en el modo Pintar, asi que "Quitar especiales"
+      // (mismo modo) debe poder quitarlo — sin obligar a ir a "Quitar
+      // rampas" del modo Altura.
+      if (t.decorations && t.decorations[i] !== 0) {
+        t.decorations[i] = 0;
+        cellChanged = true;
+      }
+      if (cellChanged) { markChunkDirty(col, row); removed++; }
     }
   }
   if (removed > 0) notify();
@@ -1834,10 +1955,11 @@ export function copyRect(c0, r0, c1, r1) {
   const cw = cMax - cMin + 1;
   const ch = rMax - rMin + 1;
   if (cw <= 0 || ch <= 0) return false;
-  const heights   = new Int16Array(cw * ch);
-  const textures  = new Int8Array (cw * ch);
-  const objects   = new Array(cw * ch).fill(null);
-  const smoothing = new Array(cw * ch).fill(null);
+  const heights     = new Int16Array(cw * ch);
+  const textures    = new Int8Array (cw * ch);
+  const objects     = new Array(cw * ch).fill(null);
+  const smoothing   = new Array(cw * ch).fill(null);
+  const decorations = new Int16Array(cw * ch);
   for (let r = 0; r < ch; r++) {
     for (let c = 0; c < cw; c++) {
       const src = (rMin + r) * t.cols + (cMin + c);
@@ -1847,17 +1969,170 @@ export function copyRect(c0, r0, c1, r1) {
       const so = t.objects[src];
       objects[dst]  = so ? { ...so } : null;
       smoothing[dst] = t.smoothing ? t.smoothing[src] : null;
+      decorations[dst] = t.decorations ? t.decorations[src] : 0;
     }
   }
-  state.clipboard = { cols: cw, rows: ch, heights, textures, objects, smoothing };
+  // Entidades del sidebar dentro del rectangulo: las guardamos con su posicion
+  // RELATIVA al rectangulo (dc/dr) para reanclarlas al pegar. Conservamos
+  // kind/angle/target; el id se regenera al pegar (son copias nuevas). No
+  // duplicamos rutas: el target apunta al mismo patrol id que tuviera.
+  const entities = [];
+  if (Array.isArray(t.enemies)) {
+    for (const e of t.enemies) {
+      if (e.col >= cMin && e.col <= cMax && e.row >= rMin && e.row <= rMax) {
+        entities.push({
+          dc: e.col - cMin,
+          dr: e.row - rMin,
+          kind: e.kind,
+          angle: e.angle || 0,
+          target: e.target ?? null,
+        });
+      }
+    }
+  }
+  state.clipboard = { cols: cw, rows: ch, heights, textures, objects, smoothing, decorations, entities };
+  // Tambien volcamos la seleccion al portapapeles del SISTEMA en texto
+  // legible, para poder pegarla fuera del editor (p.ej. en un chat).
+  copyRectToSystemClipboard(state.clipboard);
   notify();
   return true;
+}
+
+/**
+ * Serializa la seleccion (el clipboard interno) a texto legible y lo pone en
+ * el portapapeles del sistema. Formato: cabecera con dimensiones + una
+ * rejilla ASCII por capa (textura / altura / objetos / decoracion), con los
+ * NOMBRES reales de la paleta — pensado para pegarlo en un chat y que se
+ * entienda de un vistazo.
+ */
+function copyRectToSystemClipboard(cb) {
+  const { cols, rows, heights, textures, objects, decorations } = cb;
+  const lines = [];
+  lines.push('```uplifter-map');
+  lines.push(`# seleccion ${cols}x${rows} (cols x rows)`);
+
+  // -- Leyenda de texturas usadas (indice → nombre). --
+  const usedTex = new Set();
+  for (const ti of textures) if (ti >= 0) usedTex.add(ti);
+  if (usedTex.size) {
+    lines.push('# texturas: ' + [...usedTex].sort((a, b) => a - b)
+      .map(ti => `${ti}=${PALETTE[ti]?.id ?? '?'}`).join('  '));
+  }
+
+  const DIRS = ['NE', 'SE', 'SO', 'NO'];
+  const cell = (r, c) => r * cols + c;
+
+  // -- Capa TEXTURA: una celda por nombre corto (o '.' si vacia/agua). --
+  lines.push('## texturas');
+  for (let r = 0; r < rows; r++) {
+    const row = [];
+    for (let c = 0; c < cols; c++) {
+      const ti = textures[cell(r, c)];
+      row.push(ti >= 0 ? (PALETTE[ti]?.id ?? `#${ti}`) : '.');
+    }
+    lines.push(row.join('\t'));
+  }
+
+  // -- Capa ALTURA: entero por celda (h < 0 = bajo el mar = '~'). --
+  lines.push('## alturas (h; ~ = bajo el mar)');
+  for (let r = 0; r < rows; r++) {
+    const row = [];
+    for (let c = 0; c < cols; c++) {
+      const h = heights[cell(r, c)];
+      row.push(h < 0 ? '~' : String(h));
+    }
+    lines.push(row.join('\t'));
+  }
+
+  // -- Capa DECORACIONES: solo si hay alguna (kind/dir). --
+  let anyDeco = false;
+  for (const d of decorations) if (d) { anyDeco = true; break; }
+  if (anyDeco) {
+    lines.push('## decoraciones (kind/dir)');
+    for (let r = 0; r < rows; r++) {
+      const row = [];
+      for (let c = 0; c < cols; c++) {
+        const code = decorations[cell(r, c)];
+        if (!code) { row.push('.'); continue; }
+        const deco = decodeDeco(code);
+        row.push(deco ? `${deco.kind}/${DIRS[deco.dir] ?? deco.dir}` : '?');
+      }
+      lines.push(row.join('\t'));
+    }
+  }
+
+  // -- Capa OBJETOS: lista de (col,row) kind [storeys], solo los que haya. --
+  const objList = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const o = objects[cell(r, c)];
+      if (o) objList.push(`(${c},${r}) ${o.kind}${o.storeys != null ? ` x${o.storeys}` : ''}`);
+    }
+  }
+  if (objList.length) {
+    lines.push('## objetos');
+    for (const s of objList) lines.push(s);
+  }
+
+  lines.push('```');
+  const text = lines.join('\n');
+
+  // Portapapeles del sistema: navigator.clipboard (contexto seguro) con
+  // fallback a un textarea + execCommand para entornos sin permiso/focus.
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  } catch {
+    fallbackCopy(text);
+  }
+  if (typeof window !== 'undefined' && window.__toast) {
+    window.__toast(`Seleccion ${cols}x${rows} copiada al portapapeles`, 'success', 2500);
+  }
+  return text;
+}
+
+function fallbackCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  } catch { /* sin portapapeles disponible: no-op */ }
 }
 
 export function pasteAt(col, row) {
   const cb = state.clipboard;
   if (!cb) return false;
   const t = state.tilemap;
+
+  // Relative-height paste: shift every cell's height so the prop's LOWEST cell
+  // (its footing) lands on the terrain height under the cursor. This makes a
+  // tall building sit ON the mountain you drop it on, instead of keeping its
+  // absolute heights and getting buried. heightShift is added to each pasted
+  // height; 0 when the option is off (absolute paste).
+  let heightShift = 0;
+  if (state.pasteRelativeHeight) {
+    // Prop's base = the minimum height among its cells that have one (>=0).
+    let propBase = null;
+    for (let i = 0; i < cb.heights.length; i++) {
+      const h = cb.heights[i];
+      if (h >= 0 && (propBase === null || h < propBase)) propBase = h;
+    }
+    // Target ground = height of the terrain cell under the cursor.
+    if (propBase !== null
+        && col >= 0 && col < t.cols && row >= 0 && row < t.rows) {
+      const groundH = t.heights[row * t.cols + col];
+      if (groundH >= 0) heightShift = groundH - propBase;
+    }
+  }
+
   let anyChanged = false;
   for (let r = 0; r < cb.rows; r++) {
     for (let c = 0; c < cb.cols; c++) {
@@ -1867,8 +2142,11 @@ export function pasteAt(col, row) {
       const src = r * cb.cols + c;
       const dst = dr * t.cols + dc;
       let cellChanged = false;
-      if (t.heights[dst] !== cb.heights[src]) {
-        t.heights[dst] = cb.heights[src];
+      // Apply the height (shifted in relative mode). Empty cells (-1) stay -1.
+      const srcH = cb.heights[src];
+      const newH = (srcH >= 0) ? (srcH + heightShift) : srcH;
+      if (t.heights[dst] !== newH) {
+        t.heights[dst] = newH;
         cellChanged = true;
       }
       if (t.textures[dst] !== cb.textures[src]) {
@@ -1889,12 +2167,62 @@ export function pasteAt(col, row) {
         t.smoothing[dst] = cb.smoothing[src];
         cellChanged = true;
       }
+      if (t.decorations && cb.decorations
+          && t.decorations[dst] !== cb.decorations[src]) {
+        t.decorations[dst] = cb.decorations[src];
+        cellChanged = true;
+      }
       if (cellChanged) {
         markChunkDirty(dc, dr);
         anyChanged = true;
       }
     }
   }
+
+  // Entidades: pegar es REEMPLAZAR. Primero BORRAMOS todas las entidades que
+  // caigan dentro del rectangulo de destino (el area que ocupa el clipboard,
+  // recortada a los limites del mapa) — asi no quedan "rastros" de lo que
+  // hubiera antes — y luego pegamos las del clipboard, reancladas por su offset
+  // relativo, con id nuevo cada una. Lo hacemos incluso si el clipboard no
+  // trae entidades: pegar un area limpia debe dejar el destino limpio.
+  {
+    const dcMin = Math.max(0, col);
+    const drMin = Math.max(0, row);
+    const dcMax = Math.min(t.cols - 1, col + cb.cols - 1);
+    const drMax = Math.min(t.rows - 1, row + cb.rows - 1);
+    if (Array.isArray(t.enemies) && dcMax >= dcMin && drMax >= drMin) {
+      const before = t.enemies.length;
+      const removedSel = state.selectedEntityRef;
+      t.enemies = t.enemies.filter(e =>
+        !(e.col >= dcMin && e.col <= dcMax && e.row >= drMin && e.row <= drMax));
+      if (t.enemies.length !== before) {
+        // Si la entidad seleccionada se borro, limpia la seleccion.
+        if (removedSel && removedSel.type === 'enemy'
+            && !t.enemies.some(e => e.id === removedSel.id)) {
+          state.selectedEntityRef = null;
+        }
+        fullRebuild3dRequested = true;
+        anyChanged = true;
+      }
+    }
+  }
+  if (Array.isArray(cb.entities) && cb.entities.length) {
+    for (const ce of cb.entities) {
+      const dc = col + ce.dc;
+      const dr = row + ce.dr;
+      if (dc < 0 || dc >= t.cols || dr < 0 || dr >= t.rows) continue;
+      // El area destino ya quedo limpia arriba; el unico solape posible es
+      // entre dos entidades del propio clipboard en la misma celda → la
+      // primera gana.
+      if (t.enemies.some(e => e.col === dc && e.row === dr)) continue;
+      state.enemyCounter += 1;
+      const id = `e${state.enemyCounter}`;
+      t.enemies.push({ id, kind: ce.kind, col: dc, row: dr, angle: ce.angle || 0, target: ce.target ?? null });
+      fullRebuild3dRequested = true;
+      anyChanged = true;
+    }
+  }
+
   if (anyChanged) notify();
   return anyChanged;
 }
@@ -1903,6 +2231,113 @@ export function pasteAt(col, row) {
 export function clearClipboard() {
   state.clipboard = null;
   notify();
+}
+
+// ---------------------------------------------------------------------
+// Reusable area props (.tprop)
+//
+// A "prop" is a saved map rectangle (the same shape as the clipboard) you can
+// drop into any map — e.g. a cool military building saved as fortress.tprop.
+// Textures are stored BY NAME (the palette id, e.g. 'barco') instead of the
+// numeric index, so a prop survives palette changes and works across maps.
+// Objects/heights/decorations are engine-agnostic already, so they're stored
+// verbatim.
+// ---------------------------------------------------------------------
+
+const PROP_SCHEMA = 2;   // 2: añade entities (entidades del sidebar)
+
+/** Serialise the current clipboard into a portable prop object. Returns null
+ *  if there's nothing copied. */
+function clipboardToProp(cb) {
+  if (!cb) return null;
+  const n = cb.cols * cb.rows;
+  // Textures → names. -1 (empty) stays null.
+  const texNames = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    const ti = cb.textures[i];
+    texNames[i] = (ti >= 0 && PALETTE[ti]) ? PALETTE[ti].id : null;
+  }
+  return {
+    schema: PROP_SCHEMA,
+    cols: cb.cols,
+    rows: cb.rows,
+    heights: Array.from(cb.heights),
+    texNames,
+    objects: cb.objects.map(o => (o ? { ...o } : null)),
+    smoothing: cb.smoothing ? cb.smoothing.slice() : new Array(n).fill(null),
+    decorations: cb.decorations ? Array.from(cb.decorations) : new Array(n).fill(0),
+    // Entidades del sidebar (posicion relativa + kind/angle/target). El target
+    // es un id de patrulla que solo tiene sentido si el mapa destino la tiene;
+    // si no, la entidad se pega sin ruta (sigue siendo colocable a mano).
+    entities: Array.isArray(cb.entities)
+      ? cb.entities.map(e => ({ dc: e.dc, dr: e.dr, kind: e.kind, angle: e.angle || 0, target: e.target ?? null }))
+      : [],
+  };
+}
+
+/** Rebuild a clipboard from a saved prop, remapping texture NAMES back to the
+ *  current palette's indices (unknown names → -1 / empty). */
+function propToClipboard(prop) {
+  if (!prop || !prop.cols || !prop.rows) return null;
+  const n = prop.cols * prop.rows;
+  const heights = new Int16Array(n);
+  const textures = new Int8Array(n).fill(-1);
+  const decorations = new Int16Array(n);
+  const objects = new Array(n).fill(null);
+  const smoothing = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    heights[i] = prop.heights ? (prop.heights[i] | 0) : -1;
+    const name = prop.texNames ? prop.texNames[i] : null;
+    if (name) {
+      const idx = PALETTE.findIndex(p => p.id === name);
+      textures[i] = idx;   // -1 if the name isn't in this palette
+    }
+    decorations[i] = prop.decorations ? (prop.decorations[i] | 0) : 0;
+    const o = prop.objects ? prop.objects[i] : null;
+    objects[i] = o ? { ...o } : null;
+    smoothing[i] = prop.smoothing ? prop.smoothing[i] : null;
+  }
+  // Entidades (schema 2+). Props antiguos sin entities → array vacio.
+  const entities = Array.isArray(prop.entities)
+    ? prop.entities.map(e => ({ dc: e.dc | 0, dr: e.dr | 0, kind: e.kind, angle: e.angle || 0, target: e.target ?? null }))
+    : [];
+  return { cols: prop.cols, rows: prop.rows, heights, textures, objects, smoothing, decorations, entities };
+}
+
+/** Save the CURRENT clipboard (the last copied selection) as a named prop on
+ *  disk. Returns a promise that resolves to { ok, name } / { ok:false, error }.
+ *  Copy an area first (Copiar mode), then call this. */
+export async function saveSelectionAsProp(name) {
+  const prop = clipboardToProp(state.clipboard);
+  if (!prop) return { ok: false, error: 'no hay nada copiado — copia un área primero' };
+  if (!window.modeditor?.prop) return { ok: false, error: 'prop API no disponible' };
+  return window.modeditor.prop.save({ name, prop });
+}
+
+/** List saved prop names. Resolves to an array of names (possibly empty). */
+export async function listProps() {
+  if (!window.modeditor?.prop) return [];
+  const r = await window.modeditor.prop.list();
+  return (r && r.ok) ? r.names : [];
+}
+
+/** Load a prop by name INTO the clipboard, so the next paste drops it. Returns
+ *  { ok, cols, rows } or { ok:false, error }. */
+export async function loadPropToClipboard(name) {
+  if (!window.modeditor?.prop) return { ok: false, error: 'prop API no disponible' };
+  const r = await window.modeditor.prop.load({ name });
+  if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'no se pudo cargar el prop' };
+  const cb = propToClipboard(r.prop);
+  if (!cb) return { ok: false, error: 'prop inválido' };
+  state.clipboard = cb;
+  notify();
+  return { ok: true, cols: cb.cols, rows: cb.rows };
+}
+
+/** Delete a saved prop by name. Resolves to { ok } / { ok:false, error }. */
+export async function deleteProp(name) {
+  if (!window.modeditor?.prop) return { ok: false, error: 'prop API no disponible' };
+  return window.modeditor.prop.delete({ name });
 }
 
 // Undo stack común a todos los generadores (ciudad, militar, ...). Cada
@@ -2035,6 +2470,96 @@ export function runMilitaryGenerator(col, row) {
         state.tilemap.objects[u.i] = u.obj;
         state.tilemap.heights[u.i] = u.h;
       }
+      return undoCells.map(u => ({ col: u.col, row: u.row }));
+    },
+  });
+
+  notify();
+  return modified;
+}
+
+/**
+ * Run the container ship generator at (col, row).
+ * The ship size comes from `genShipSize` state.
+ * Undo captures textures + objects + heights (ship raises water cells to sea level).
+ */
+export function runContainerShipGenerator(col, row) {
+  const tex0 = new Int8Array(state.tilemap.textures);
+  const obj0 = state.tilemap.objects.slice();
+  const h0   = new Int16Array(state.tilemap.heights);
+
+  const { modified, dirtyCells } = generateContainerShipAt(state.tilemap, col, row, genShipSize, genShipOrientation, genShipDeckH);
+  if (modified === 0) return 0;
+
+  for (const { col: cc, row: rr } of dirtyCells) markChunkDirty(cc, rr);
+
+  const uniqIdx = new Set();
+  const undoCells = [];
+  for (const { col: cc, row: rr } of dirtyCells) {
+    const i = rr * state.tilemap.cols + cc;
+    if (uniqIdx.has(i)) continue;
+    uniqIdx.add(i);
+    undoCells.push({ i, col: cc, row: rr, tex: tex0[i], obj: obj0[i], h: h0[i] });
+  }
+  pushGeneratorUndo({
+    undo: () => {
+      for (const u of undoCells) {
+        state.tilemap.textures[u.i] = u.tex;
+        state.tilemap.objects[u.i]  = u.obj;
+        state.tilemap.heights[u.i]  = u.h;
+      }
+      return undoCells.map(u => ({ col: u.col, row: u.row }));
+    },
+  });
+
+  notify();
+  return modified;
+}
+
+/**
+ * Run the warship generator at (col, row).
+ * Same lifecycle as runContainerShipGenerator.
+ */
+export function runWarshipGenerator(col, row) {
+  const tex0 = new Int8Array(state.tilemap.textures);
+  const obj0 = state.tilemap.objects.slice();
+  const h0   = new Int16Array(state.tilemap.heights);
+
+  const { modified, dirtyCells, radarPositions } = generateWarshipAt(
+    state.tilemap, col, row, genShipSize, genShipOrientation, genShipDeckH
+  );
+  if (modified === 0) return 0;
+
+  for (const { col: cc, row: rr } of dirtyCells) markChunkDirty(cc, rr);
+
+  // Place radar entities on the bridge and mast positions returned by the generator.
+  const addedEnemyIds = [];
+  for (const { col: rc, row: rr } of radarPositions) {
+    state.enemyCounter += 1;
+    const id = `e${state.enemyCounter}`;
+    state.tilemap.enemies.push({ id, kind: 'monster_rad', col: rc, row: rr, angle: 0, target: null });
+    addedEnemyIds.push(id);
+  }
+
+  const uniqIdx = new Set();
+  const undoCells = [];
+  for (const { col: cc, row: rr } of dirtyCells) {
+    const i = rr * state.tilemap.cols + cc;
+    if (uniqIdx.has(i)) continue;
+    uniqIdx.add(i);
+    undoCells.push({ i, col: cc, row: rr, tex: tex0[i], obj: obj0[i], h: h0[i] });
+  }
+  pushGeneratorUndo({
+    undo: () => {
+      for (const u of undoCells) {
+        state.tilemap.textures[u.i] = u.tex;
+        state.tilemap.objects[u.i]  = u.obj;
+        state.tilemap.heights[u.i]  = u.h;
+      }
+      // Remove radar enemies added by this stamp.
+      state.tilemap.enemies = state.tilemap.enemies.filter(
+        e => !addedEnemyIds.includes(e.id)
+      );
       return undoCells.map(u => ({ col: u.col, row: u.row }));
     },
   });

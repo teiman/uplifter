@@ -433,23 +433,29 @@ void() rad_death =
 {
 	local entity smoker;
 
-	// Flash explosion at the radar's position. We do NOT touch the base
-	// (self.trigger_field, progs/radpl.mdl) — the wreckage should keep
-	// it sitting there as a destroyed-radar prop. Previously this called
-	// BecomeExplosion on the trigger_field, which swapped its model to
-	// the explosion sprite and then SUB_Remove'd it.
+	// The radar is two parts (mirror of the SAM):
+	//   self                = the BASE pedestal (progs/radba.mdl) — its model
+	//                         sits BELOW the origin (Z -24..+2), the part that
+	//                         rests on the ground.
+	//   self.trigger_field  = the dish/HEAD (progs/radpl.mdl) — the upper part
+	//                         (Z -10..+10) that scans.
+	// On death we blow up the HEAD and leave the BASE as inert wreckage. (The
+	// old code did the opposite — removed the base and kept the dish, which is
+	// why the destroyed radar left the head floating in the air.)
 	WriteByte(MSG_BROADCAST, SVC_TEMPENTITY);
 	WriteByte(MSG_BROADCAST, TE_EXPLOSION);
 	WriteCoord(MSG_BROADCAST, self.origin_x);
 	WriteCoord(MSG_BROADCAST, self.origin_y);
 	WriteCoord(MSG_BROADCAST, self.origin_z);
-	// Make the base inert: visible but not interactive.
-	self.trigger_field.takedamage = 0;
-	self.trigger_field.solid = SOLID_NOT;
 
-	// Persistent column emitter. Independent entity because the radar
-	// itself may be removed (singleplayer) or kept around invisible to
-	// respawn later (deathmatch).
+	// Blow up the dish/head: turns into an explosion sprite and vanishes.
+	if (self.trigger_field != world)
+	{
+		self.trigger_field.think = BecomeExplosion;
+		self.trigger_field.nextthink = (time + 0.1);
+	}
+
+	// Persistent wreckage smoke column at the radar's position.
 	smoker = spawn();
 	smoker.classname = "rad_smoke_emitter";
 	smoker.movetype = MOVETYPE_NONE;
@@ -461,14 +467,18 @@ void() rad_death =
 
 	if (!deathmatch)
 	{
-		remove(self);
+		// Leave the BASE (self / radba.mdl) as a dead, non-interactive prop on
+		// the ground. Stop its AI so it just sits there as wreckage.
+		self.solid = SOLID_NOT;
+		self.takedamage = 0;
+		self.th_die = SUB_Null;
+		self.enemy = world;
+		self.think = SUB_Null;
+		self.nextthink = -1;
 	}
 	else
 	{
-		// Hide the rotating-antenna body (self / progs/radba.mdl) while
-		// waiting to respawn. setmodel(self, "") alone doesn't always
-		// blank the renderer on every engine — clearing modelindex
-		// explicitly is the belt-and-braces fix. The base stays visible.
+		// Hide the base while waiting to respawn (the head was blown up above).
 		setmodel(self, "");
 		self.modelindex = 0;
 		self.solid = SOLID_NOT;

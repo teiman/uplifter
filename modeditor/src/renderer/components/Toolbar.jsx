@@ -18,6 +18,12 @@ import {
   getSelectedEntityKind, setSelectedEntityKind,
   getEnemies, getSelectedEnemy,
   getDaySelected, setDaySelected,
+  getGenShipSize, setGenShipSize,
+  getGenShipOrientation, setGenShipOrientation,
+  getGenShipDeckH, setGenShipDeckH,
+  saveSelectionAsProp, listProps, loadPropToClipboard, deleteProp,
+  getPasteRelativeHeight, setPasteRelativeHeight,
+  getBucketIgnoreHeight, setBucketIgnoreHeight,
 } from '../state/store.js';
 import { regionOfCell, REGION_GRID, ENEMY_TYPES } from '../../shared/types.mjs';
 
@@ -48,10 +54,25 @@ const COPY_TOOLS = [
 
 // --- generator sub-tools (shown in the Generadores ribbon) ---
 const GEN_TOOLS = [
-  { id: 'city',     label: 'Ciudad',       icon: 'office' },
-  { id: 'military', label: 'Base militar', icon: 'shield' },
-  { id: '2siglos',  label: '2 siglos',     icon: 'time' },
+  { id: 'city',          label: 'Ciudad',            icon: 'office' },
+  { id: 'military',      label: 'Base militar',      icon: 'shield' },
+  { id: 'ship_container',label: 'Barco contenedores',icon: 'ship' },
+  { id: 'ship_warship',  label: 'Barco de guerra',   icon: 'lifesaver' },
+  { id: '2siglos',       label: '2 siglos',          icon: 'time' },
 ];
+
+const SHIP_SIZE_OPTS = [
+  { id: 'small',  label: 'Pequeño' },
+  { id: 'medium', label: 'Mediano' },
+  { id: 'large',  label: 'Grande' },
+  { id: 'giant',  label: 'Gigante' },
+];
+const SHIP_ORIENT_OPTS = [
+  { id: 'h',   label: '↔ H',        title: 'Horizontal (proa→popa de este a oeste)' },
+  { id: 'v',   label: '↕ V',        title: 'Vertical (proa→popa de norte a sur)' },
+  { id: 'rnd', label: '⟳ Aleatorio', title: 'Orientación aleatoria en cada click' },
+];
+const SHIP_TOOLS = new Set(['ship_container', 'ship_warship']);
 
 // --- paint sub-tools (shown in the Pintar ribbon) ---
 const PAINT_TOOLS = [
@@ -112,6 +133,7 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
   const clipboard = useStore(() => getClipboard());
   const tilemap = useStore(() => getTilemap());
   const show2dDebug = useStore(() => getShow2dDebug());
+  const bucketIgnoreH = useStore(() => getBucketIgnoreHeight());
   const activePatrol = useStore(() => getActivePatrol());
   const selectedEntityKind = useStore(() => getSelectedEntityKind());
   const enemies = useStore(() => getEnemies());
@@ -122,6 +144,65 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
   // Vive en el store porque la simulacion la dispara Canvas2D al soltar el
   // drag-rect, no la Toolbar directamente.
   const siglosProgress = useStore(() => getSiglosProgress());
+
+  // Saved props (.tprop). List refreshes on entering Copia and after any
+  // save/delete. `propName` is the name field for saving; `selectedProp` is the
+  // dropdown selection for load/delete.
+  const [propNames, setPropNames] = React.useState([]);
+  const [propName, setPropName] = React.useState('');
+  const [selectedProp, setSelectedProp] = React.useState('');
+  const pasteRelH = useStore(() => getPasteRelativeHeight());
+
+  const refreshProps = React.useCallback(() => {
+    listProps().then((names) => {
+      setPropNames(names);
+      // Keep a valid selection: default to the first prop if none chosen.
+      setSelectedProp((cur) => (names.includes(cur) ? cur : (names[0] || '')));
+    }).catch(() => setPropNames([]));
+  }, []);
+  React.useEffect(() => {
+    if (mode === 'copy') refreshProps();
+  }, [mode, refreshProps]);
+
+  async function onSaveProp() {
+    const name = (propName || '').trim();
+    if (!name) {
+      window.__toast?.('Escribe un nombre para el prop primero', 'warning', 2500);
+      return;
+    }
+    const r = await saveSelectionAsProp(name);
+    if (r && r.ok) {
+      window.__toast?.(`Prop guardado: ${r.name}.tprop`, 'success', 2500);
+      setPropName('');
+      refreshProps();
+      setSelectedProp(r.name);
+    } else {
+      window.__toast?.(`No se pudo guardar: ${(r && r.error) || '?'}`, 'danger', 3500);
+    }
+  }
+
+  async function onLoadProp(name) {
+    if (!name) return;
+    const r = await loadPropToClipboard(name);
+    if (r && r.ok) {
+      setTool('paste');   // ready to drop it
+      window.__toast?.(`Prop "${name}" listo para pegar (${r.cols}×${r.rows})`, 'success', 2500);
+    } else {
+      window.__toast?.(`No se pudo cargar: ${(r && r.error) || '?'}`, 'danger', 3500);
+    }
+  }
+
+  async function onDeleteProp(name) {
+    if (!name) return;
+    if (!confirm(`¿Borrar el prop "${name}"? (no se puede deshacer)`)) return;
+    const r = await deleteProp(name);
+    if (r && r.ok) {
+      window.__toast?.(`Prop "${name}" borrado`, 'success', 2000);
+      refreshProps();
+    } else {
+      window.__toast?.(`No se pudo borrar: ${(r && r.error) || '?'}`, 'danger', 3500);
+    }
+  }
 
   return (
     <div className="ribbon">
@@ -236,11 +317,24 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
                 </Button>
               ))}
             </ButtonGroup>
+            {tool === 'bucket' && (
+              <>
+                <Divider />
+                <Switch
+                  checked={bucketIgnoreH}
+                  label="Ignorar altura (rampas)"
+                  onChange={(e) => setBucketIgnoreHeight(e.target.checked)}
+                  style={{ marginBottom: 0 }}
+                />
+              </>
+            )}
             <span className="ribbon-hint">
               {tool === 'rect'
                 ? 'Arrastra para definir el rectángulo; al soltar se rellena con la textura/objeto seleccionado.'
                 : tool === 'bucket'
-                ? 'Click en una celda: rellena todas las contiguas con la misma altura y textura usando la textura seleccionada.'
+                ? (bucketIgnoreH
+                    ? 'Click: rellena contiguas de la misma textura fluyendo por rampas (escalón ≤1); para en acantilados (salto >1).'
+                    : 'Click en una celda: rellena todas las contiguas con la misma altura y textura usando la textura seleccionada.')
                 : 'Selecciona una textura u objeto de la paleta y pinta con click izquierdo.'}
             </span>
           </>
@@ -293,6 +387,32 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
                 </Button>
               ))}
             </ButtonGroup>
+            {SHIP_TOOLS.has(tool) && (
+              <>
+                <Divider />
+                <ButtonGroup>
+                  {SHIP_SIZE_OPTS.map(s => (
+                    <Button key={s.id} small active={getGenShipSize() === s.id}
+                      onClick={() => setGenShipSize(s.id)}>{s.label}</Button>
+                  ))}
+                </ButtonGroup>
+                <Divider />
+                <ButtonGroup>
+                  {SHIP_ORIENT_OPTS.map(o => (
+                    <Button key={o.id} small active={getGenShipOrientation() === o.id}
+                      title={o.title} onClick={() => setGenShipOrientation(o.id)}>{o.label}</Button>
+                  ))}
+                </ButtonGroup>
+                <Divider />
+                <span className="ribbon-field-label">Cubierta H:</span>
+                <MiniNumber
+                  value={getGenShipDeckH()}
+                  onCommit={v => setGenShipDeckH(v)}
+                  min={-20}
+                  width={52}
+                />
+              </>
+            )}
             {siglosProgress && (
               <>
                 <Divider />
@@ -314,6 +434,10 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
                 ? 'Click en una celda: rellena la región conexa con un grid de casas + calles. Ctrl-Z para deshacer.'
                 : tool === 'military'
                 ? 'Click en una celda: rellena la región conexa con pista, hangares, cuarteles, búnker y torre de vigilancia. Ctrl-Z para deshacer.'
+                : tool === 'ship_container'
+                ? 'Click en el agua: genera un barco de contenedores. Elige el tamaño arriba. Orientación aleatoria. Ctrl-Z para deshacer.'
+                : tool === 'ship_warship'
+                ? 'Click en el agua: genera un barco de guerra. Elige el tamaño arriba. Orientación aleatoria. Ctrl-Z para deshacer.'
                 : tool === '2siglos'
                 ? 'Arrastra un rectángulo: al soltar, simula 200 iteraciones de erosión, ríos y suavizado solo dentro de ese área.'
                 : 'Elige un generador y click para rellenar.'}
@@ -362,14 +486,62 @@ export function Toolbar({ onSave, onCompile, onLaunch, compiling, canLaunch, sav
                 <Button icon="trash" small onClick={clearClipboard}>
                   Vaciar
                 </Button>
+                {/* Name field + save: type a name, then Guardar prop. */}
+                <input
+                  className="bp5-input bp5-small"
+                  style={{ width: 130 }}
+                  type="text"
+                  placeholder="nombre del prop"
+                  value={propName}
+                  onChange={(e) => setPropName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') onSaveProp(); }}
+                />
+                <Button icon="floppy-disk" small onClick={onSaveProp}>
+                  Guardar prop
+                </Button>
               </>
             ) : (
-              <span className="ribbon-hint">Portapapeles vacío.</span>
+              <span className="ribbon-hint">Portapapeles vacío — arrastra para copiar.</span>
             )}
+            <Divider />
+            {/* Saved props library: dropdown to pick one, then load or delete. */}
+            <span className="ribbon-text">Props:</span>
+            {propNames.length ? (
+              <>
+                <div className="bp5-html-select bp5-small">
+                  <select
+                    value={selectedProp}
+                    onChange={(e) => setSelectedProp(e.target.value)}
+                  >
+                    {propNames.map(name => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                  <span className="bp5-icon bp5-icon-double-caret-vertical" />
+                </div>
+                <Button icon="import" small onClick={() => onLoadProp(selectedProp)}>
+                  Cargar
+                </Button>
+                <Button icon="trash" small intent="danger"
+                  onClick={() => onDeleteProp(selectedProp)} title="Borrar este prop" />
+              </>
+            ) : (
+              <span className="ribbon-hint">(ninguno — copia un área y guárdala)</span>
+            )}
+            <Button icon="refresh" minimal small onClick={refreshProps} title="Refrescar lista" />
+            <Divider />
+            {/* Relative-height paste: drop props onto the terrain under the
+                cursor instead of using their absolute heights. */}
+            <Switch
+              checked={pasteRelH}
+              label="Pegar a la altura del ratón"
+              onChange={(e) => setPasteRelativeHeight(e.target.checked)}
+              style={{ marginBottom: 0 }}
+            />
             <span className="ribbon-hint">
               {tool === 'copy'
-                ? 'Arrastra para copiar la región (altura + textura + objetos).'
-                : 'Click para pegar el portapapeles usando el cursor como esquina superior izquierda.'}
+                ? 'Arrastra para copiar la región (altura + textura + objetos). Ponle nombre y “Guardar prop”.'
+                : 'Click para pegar usando el cursor como esquina superior izquierda.'}
             </span>
           </>
         )}

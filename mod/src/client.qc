@@ -788,6 +788,9 @@ void() PlayerDeathThink =
 			return;
 		}
 		self.deadflag = DEAD_RESPAWNABLE;
+		// Aun NO armamos el respawn: exigimos un frame posterior con el
+		// click suelto antes de aceptar la pulsacion (anti-bogostick).
+		self.respawn_armed = 0;
 		if ((!deathmatch && !coop))
 		{
 			if (((self.health < 3) && (self.lives == 1)))
@@ -908,9 +911,29 @@ void() PlayerDeathThink =
 			}
 		}
 	}
-	if (((!self.button0 && !self.button1) && !self.button2))
+	// --- Respawn por click, con proteccion anti-bogostick (debounce) ---
+	//
+	// El respawn debe dispararse con un CLICK (button0 = fire). Para evitar
+	// que un click "heredado" (el boton ya pulsado al morir, o mantenido)
+	// respawnee al instante, usamos un flag de armado:
+	//
+	//   1. Mientras el click siga pulsado, NO armamos (esperamos a soltar).
+	//   2. En cuanto el click esta suelto, armamos (respawn_armed = 1).
+	//   3. Ya armado, el siguiente click pulsado respawnea.
+	//
+	// Asi el flujo es siempre: soltar -> (esperar) -> click -> respawn,
+	// nunca un respawn por una pulsacion previa.
+	if (!self.respawn_armed)
 	{
+		if (!self.button0)
+		{
+			self.respawn_armed = 1;   // boton suelto: ya podemos aceptar el click
+		}
 		return;
+	}
+	if (!self.button0)
+	{
+		return;                       // armado pero aun sin click
 	}
 	if ((time < self.pain_finished))
 	{
@@ -919,6 +942,7 @@ void() PlayerDeathThink =
 	self.button0 = 0;
 	self.button1 = 0;
 	self.button2 = 0;
+	self.respawn_armed = 0;
 	respawn();
 };
 
@@ -961,10 +985,32 @@ void() PlayerPreThink =
 	CheckRules();
 	Stars_DecayTick();
 	Stars_HighFlightTick();
+	Stars_RadarTick();
 	Scrap_HealTick();
 	Objectives_HudTick();
 	Stealth_HudTick();
+	Sun_FlareTick();
 	Siphon_Tick();
+	// Distancia recorrida para el resumen al morir: usamos la velocidad del
+	// vehiculo pilotado (lo normal) y, si no pilota, la del propio jugador.
+	// frametime convierte velocidad (u/s) en distancia de este frame.
+	if ((self.enemy.owner == self))
+	{
+		self.dist_travelled = (self.dist_travelled + (vlen(self.enemy.velocity) * frametime));
+	}
+	else
+	{
+		self.dist_travelled = (self.dist_travelled + (vlen(self.velocity) * frametime));
+	}
+	// Bandera para el overlay CSQC: 1 mientras el jugador este muerto.
+	if ((self.deadflag != DEAD_NO))
+	{
+		self.hud_dead = 1;
+	}
+	else
+	{
+		self.hud_dead = 0;
+	}
 	if (g_intro_running)
 	{
 		Intro_TickPlayer();
@@ -1287,28 +1333,6 @@ void() SetCameraPlace =
 		WriteAngle(MSG_ONE, 90);
 		WriteAngle(MSG_ONE, 0);
 		WriteAngle(MSG_ONE, 0);
-
-		// Debug exhaustivo cada 0.5s. Necesitamos saber TODOS los Z.
-		if ((floor(time * 2) != self.minimap_dbg_last_t))
-		{
-			self.minimap_dbg_last_t = floor(time * 2);
-			bprint("[mm] selfZ=");
-			bprint(ftos(floor(self.origin_z)));
-			bprint(" heliZ=");
-			bprint(ftos(floor(vveh.origin_z)));
-			bprint(" oldZ=");
-			if ((self.oldenemy != world))
-			{
-				bprint(ftos(floor(self.oldenemy.origin_z)));
-			}
-			else
-			{
-				bprint("?");
-			}
-			bprint(" voff=");
-			bprint(ftos(floor(self.view_ofs_z)));
-			bprint("\n");
-		}
 		return;
 	}
 

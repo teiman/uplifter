@@ -55,8 +55,40 @@ mod/bin/
 mod/gfx/env/*
 !mod/gfx/env/uplifter_*
 
-# Motor de terceros (repo git propio, no versionar aqui)
-ref/ironwail/
+# Material de referencia (motor ironwail, fotos, conchars, etc.) — nada en
+# ref/ se versiona ni se publica.
+ref/
 
-# Claude runtime
-.claude/scheduled_tasks.lock
+# Claude runtime + local config (not part of the release)
+.claude/
+CLAUDE.md
+
+# Development design docs (Spanish internal notes — not part of the public release)
+/Uplifter.md
+/ModEditor.md
+/gameplay.md
+/dias.md
+/dias_en.md
+/column.md
+/estrella-diseno.md
+/findings.md
+/nubes.md
+/preparacion_iso.md
+/revision_television.md
+
+# Scratch / debug artifacts
+/tmp/
+/preparacion_iso/
+
+# Fluxite suggestions
+*~
+.cursor/
+.vscode/
+.idea/
+progs.dat
+progs.lno
+*.exe
+*.dll
+*.pak
+dist/
+.env

@@ -272,6 +272,42 @@ function pushQuadOriented(out, p1, p2, p3, p4, centroid, rgb) {
   pushTriOriented(out, p1, p3, p4, centroid, rgb);
 }
 
+/**
+ * Bevel del casco: prisma vertical con UNA esquina cortada en diagonal a
+ * 45° (en planta el cuadrado pierde una esquina). Espejo en preview del
+ * _wedgeBrush de mapWriter. `corner` = esquina CORTADA: 'ne'/'se'/'sw'/'nw'.
+ * Convencion mundo: +Y norte, +X este. NW=(x0,y1) NE=(x1,y1) SE=(x1,y0)
+ * SO=(x0,y0). Caras: techo y suelo (pentagono → 3 tris), 3 paredes rectas
+ * (las dos que NO tocan la esquina cortada quedan completas; las dos que la
+ * tocaban se acortan) y 1 pared diagonal inclinada en planta pero vertical
+ * en Z.
+ */
+function pushWedgeVertical(out, x0, y0, z0, x1, y1, z1, corner, colors) {
+  const topRgb    = Array.isArray(colors) ? colors : colors.top    ?? colors.side;
+  const sideRgb   = Array.isArray(colors) ? colors : colors.side;
+  const bottomRgb = Array.isArray(colors) ? colors : colors.bottom ?? colors.side;
+  const NW=[x0,y1], NE=[x1,y1], SE=[x1,y0], SO=[x0,y0];
+  // Cortar UNA esquina de un cuadrado deja un triangulo en planta: las 3
+  // esquinas conservadas. Listadas CCW desde arriba para que la tapa y la
+  // base salgan con el winding correcto (pushTriOriented reorienta igual).
+  // La arista C→A es la diagonal del corte (vertical en Z).
+  let A, B, C;  // 3 esquinas conservadas, CCW
+  if (corner === 'ne')      { A = SO; B = SE; C = NW; }   // quita NE
+  else if (corner === 'se') { A = NW; B = SO; C = NE; }   // quita SE
+  else if (corner === 'sw') { A = NE; B = NW; C = SE; }   // quita SO
+  else                      { A = SE; B = NE; C = SO; }   // quita NO
+  const Ab=[A[0],A[1],z0], Bb=[B[0],B[1],z0], Cb=[C[0],C[1],z0];
+  const At=[A[0],A[1],z1], Bt=[B[0],B[1],z1], Ct=[C[0],C[1],z1];
+  const cent = [(x0+x1)/2, (y0+y1)/2, (z0+z1)/2];
+  // Tapa y base (triangulares en planta tras el corte).
+  pushTriOriented(out, At, Bt, Ct, cent, topRgb);
+  pushTriOriented(out, Ab, Bb, Cb, cent, bottomRgb);
+  // 3 paredes verticales (A-B, B-C rectas; C-A es la diagonal del corte).
+  pushQuadOriented(out, Ab, Bb, Bt, At, cent, sideRgb);
+  pushQuadOriented(out, Bb, Cb, Ct, Bt, cent, sideRgb);
+  pushQuadOriented(out, Cb, Ab, At, Ct, cent, sideRgb);
+}
+
 function pushWedge(out, x0, y0, z0, x1, y1, z1, direction, colors) {
   const topRgb    = Array.isArray(colors) ? colors : colors.top    ?? colors.side;
   const sideRgb   = Array.isArray(colors) ? colors : colors.side;
@@ -476,6 +512,15 @@ function addCellToMesh(out, tilemap, col, row, gridHalfX, gridHalfY) {
   const bx0 = x0 + inset, bx1 = x1 - inset;
   const by0 = y0 + inset, by1 = y1 - inset;
 
+  // Bevel del casco ('wedge'): la columna de TERRENO se dibuja como un
+  // prisma achaflanado verticalmente (espejo del _wedgeBrush de mapWriter)
+  // en vez de cubos rectos. Los cubos de edificio se apilan encima igual.
+  const cellDecoPrev = tilemap.decorations ? decodeDeco(tilemap.decorations[i]) : null;
+  const isBevelPrev = cellDecoPrev && cellDecoPrev.kind === 'wedge' && terrainCubes > 0;
+  const bevelCornerPrev = isBevelPrev
+    ? (['ne', 'se', 'sw', 'nw'][cellDecoPrev.dir] || 'ne')
+    : null;
+
   for (let k = 0; k < total; k++) {
     const isTerrainCube = k < terrainCubes;
     const biomeColors = isTerrainCube ? terrainColors : buildingColors;
@@ -489,6 +534,18 @@ function addCellToMesh(out, tilemap, col, row, gridHalfX, gridHalfY) {
     const cubeMinZ = BEDROCK_TOP_Z + k * HEIGHT_UNIT;
     const isSkyscraperTop = isSkyscraper && (k === total - 1);
     const cubeMaxZ = isSkyscraperTop ? SKY_TOP_Z : cubeMinZ + HEIGHT_UNIT;
+
+    // En celdas con bevel cada cubo de terreno se dibuja como un wedge
+    // achaflanado, con los colores por cara de pickFaceTextures (igual que
+    // un cubo barco recto: side/base/capital segun el nivel). Asi el preview
+    // refleja las mismas reglas de cara que el .map.
+    if (isBevelPrev && isTerrainCube) {
+      const bf = pickFaceTextures(k, terrainCubes, neighborMaxK, terrainColors);
+      pushWedgeVertical(out, x0, y0, cubeMinZ, x1, y1, cubeMinZ + HEIGHT_UNIT,
+        bevelCornerPrev,
+        { top: bf.top ?? bf.side, side: bf.side, bottom: bf.bottom ?? bf.side });
+      continue;
+    }
 
     const useBuildingFootprint = !isTerrainCube && inset > 0;
     const cx0 = useBuildingFootprint ? bx0 : x0;
@@ -626,6 +683,9 @@ function addCellToMesh(out, tilemap, col, row, gridHalfX, gridHalfY) {
     } else if (deco && deco.kind === 'cube') {
       pushBox(out, x0, y0, terrainTopZ, x1, y1, terrainTopZ + HEIGHT_UNIT,
         { top: yellow, side: yellowShade, bottom: yellowShade });
+    } else if (deco && deco.kind === 'wedge') {
+      // El bevel del casco ya se dibujo como prisma achaflanado al construir
+      // la columna de terreno (pushWedgeVertical). Nada que anadir aqui.
     } else if (deco) {
       const placeholder = [0.6, 0.5, 0.2];
       pushBox(out, x0, y0, terrainTopZ, x1, y1, terrainTopZ + HEIGHT_UNIT,

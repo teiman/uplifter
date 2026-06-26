@@ -15,7 +15,7 @@ void() emsam_run =
 	// still visible — line of sight to the sky is essentially unlimited.
 	if ((self.goalentity != world))
 	{
-		if ((vlen((self.goalentity.origin - self.origin)) > 2000))
+		if ((vlen((self.goalentity.origin - self.origin)) > 3000))
 		{
 			self.goalentity = world;
 		}
@@ -23,6 +23,26 @@ void() emsam_run =
 	if ((!visible(self.goalentity) && (self.search_time < time)))
 	{
 		self.goalentity = world;
+	}
+	if (!self.goalentity)
+	{
+		// FindTarget only works up to ~1000 units (RANGE_MID); aerial targets are
+		// always further. Scan T0 flying monsters directly within engagement range.
+		local entity ae;
+		ae = find(world, ts, T0);
+		while (ae && !self.goalentity)
+		{
+			if ((ae.health > 0) && (ae.takedamage > 0) &&
+				(ae.movetype == MOVETYPE_FLY) && (ae.flags & FL_MONSTER))
+			{
+				if ((vlen(ae.origin - self.origin) < 3000) && visible(ae))
+				{
+					self.goalentity = ae;
+					self.enemy      = ae;
+				}
+			}
+			ae = find(ae, ts, T0);
+		}
 	}
 	if (!self.goalentity)
 	{

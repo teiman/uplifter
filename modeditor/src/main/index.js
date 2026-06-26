@@ -2,9 +2,10 @@ const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const path = require('node:path');
 
-const { TMP_DIR, WADS_DIR, TEXTURES_SRC_DIR, ensureRuntimeDirs } = require('./paths');
+const { TMP_DIR, WADS_DIR, PROPS_DIR, TEXTURES_SRC_DIR, ensureRuntimeDirs } = require('./paths');
 const { compileMap, compileMapOnlyEnts } = require('./compileTools');
 const { deployBsp, DEFAULT_DESTINATION } = require('./deployBsp');
 const { buildMapText, wadKeyFromPaths } = require('./mapWriter');
@@ -164,12 +165,19 @@ function sha256Hex(str) {
  *   12 → agua en bandas de profundidad costera (4 tonos *water1..4 por
  *        distancia a la costa) en vez de un único brush '*water' global.
  *   13 → tonos de agua con patrón de ruido (antes color plano): el warp de
- *        Quake ondula las UV, que sobre un color plano no se ve. */
-const GEOM_WRITER_VERSION = 13;
+ *        Quake ondula las UV, que sobre un color plano no se ve.
+ *   14 → el cubo de terreno más alto usa su `capital` en los laterales
+ *        aunque tenga un edificio (contenedores) encima.
+ *   15 → decoración 'wedge' (bevel de casco): la columna de terreno con
+ *        esta deco se emite como cubo achaflanado verticalmente en una
+ *        esquina (proa/popa/esquinas de barco redondeadas).
+ *   16 → el geomHash incluye wadSig (mtime+size de los WAD): editar un PNG de
+ *        textura ahora invalida el caché y fuerza recompilar la BSP. */
+const GEOM_WRITER_VERSION = 16;
 
 /** Hash de TODO lo que afecta a la geometria/BSP/iluminacion del .bsp.
  *  Si este hash cambia, hay que recompilar completo (qbsp + light). */
-function hashGeometry(t, { wadKey, debug, phong }) {
+function hashGeometry(t, { wadKey, wadSig, debug, phong }) {
   const payload = {
     geomWriterVersion: GEOM_WRITER_VERSION,
     cols: t.cols, rows: t.rows, cellSize: t.cellSize,
@@ -182,10 +190,25 @@ function hashGeometry(t, { wadKey, debug, phong }) {
     quality: t.quality,
     playArea: t.playArea,
     wadKey,
+    wadSig: wadSig ?? null,   // contenido de los WAD (mtime+size) — ver compile:run
     debug: !!debug,
     phong: !!phong,
   };
   return sha256Hex(stableJSONString(payload));
+}
+
+/** Firma del contenido de un conjunto de WAD: para cada ruta, su mtime y
+ *  tamaño. Cambia cuando un .wad se reconstruye (p.ej. tras editar un PNG de
+ *  textura), de modo que el geomHash detecte el cambio y se recompile la BSP.
+ *  Los archivos que no existan se firman como '0:0' (no rompe el hash). */
+async function wadContentSignature(absPaths) {
+  const parts = [];
+  for (const p of (absPaths ?? [])) {
+    let sig = '0:0';
+    try { const st = await fs.stat(p); sig = `${Math.round(st.mtimeMs)}:${st.size}`; } catch { /* missing */ }
+    parts.push(`${p.replace(/\\/g, '/')}=${sig}`);
+  }
+  return parts.join(';');
 }
 
 /** Hash de SOLO los campos que van al entdata lump (enemies, patrols,
@@ -403,6 +426,76 @@ function registerIpc(getWindow) {
     }
   });
 
+  // ---- Reusable area props (.tprop) ----
+  // A prop is a serialised copy of a map rectangle (the clipboard shape, with
+  // textures stored by NAME so it's portable). Stored in PROPS_DIR.
+
+  // Sanitise a prop name into a safe bare filename (no path, no traversal).
+  function safePropName(name) {
+    let n = String(name || '').trim();
+    n = n.replace(/\.tprop$/i, '');           // drop extension if given
+    n = n.replace(/[^A-Za-z0-9 _\-]/g, '_');  // only safe chars
+    n = n.replace(/\s+/g, '_').slice(0, 64);
+    return n;
+  }
+
+  ipcMain.handle('prop:save', async (_evt, { name, prop } = {}) => {
+    try {
+      const safe = safePropName(name);
+      if (!safe) return { ok: false, error: 'nombre de prop vacío o inválido' };
+      await fs.mkdir(PROPS_DIR, { recursive: true });
+      const target = path.join(PROPS_DIR, `${safe}.tprop`);
+      await fs.writeFile(target, JSON.stringify(prop, null, 2), 'utf8');
+      const stat = await fs.stat(target);
+      return { ok: true, name: safe, path: target, bytes: stat.size };
+    } catch (err) {
+      console.error('[prop:save]', err);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('prop:list', async () => {
+    try {
+      await fs.mkdir(PROPS_DIR, { recursive: true });
+      const files = await fs.readdir(PROPS_DIR);
+      const names = files
+        .filter(f => /\.tprop$/i.test(f))
+        .map(f => f.replace(/\.tprop$/i, ''))
+        .sort((a, b) => a.localeCompare(b));
+      return { ok: true, names };
+    } catch (err) {
+      console.error('[prop:list]', err);
+      return { ok: false, error: err.message, names: [] };
+    }
+  });
+
+  ipcMain.handle('prop:load', async (_evt, { name } = {}) => {
+    try {
+      const safe = safePropName(name);
+      if (!safe) return { ok: false, error: 'nombre de prop inválido' };
+      const source = path.join(PROPS_DIR, `${safe}.tprop`);
+      const text = await fs.readFile(source, 'utf8').catch(() => null);
+      if (text == null) return { ok: false, missing: true };
+      return { ok: true, name: safe, prop: JSON.parse(text) };
+    } catch (err) {
+      console.error('[prop:load]', err);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('prop:delete', async (_evt, { name } = {}) => {
+    try {
+      const safe = safePropName(name);
+      if (!safe) return { ok: false, error: 'nombre de prop inválido' };
+      const target = path.join(PROPS_DIR, `${safe}.tprop`);
+      await fs.unlink(target).catch(() => null);   // no-op if already gone
+      return { ok: true, name: safe };
+    } catch (err) {
+      console.error('[prop:delete]', err);
+      return { ok: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('compile:run', async (_evt, { tilemap, basename = 'uplifter', debug = false, phong = true } = {}) => {
     const win = getWindow();
     const send = (entry) => {
@@ -418,6 +511,13 @@ function registerIpc(getWindow) {
       const t = deserialiseTilemap(tilemap);
       const wads = await listWads();
       const wadKey = wadKeyFromPaths(wads);
+      // Firma del CONTENIDO de los WAD (mtime+size por archivo). wadKey solo
+      // lleva las RUTAS, así que un cambio de textura (que reconstruye el .wad
+      // pero no cambia su ruta) no alteraría el geomHash y el caché reusaría el
+      // .bsp viejo con la textura antigua. Incluir esta firma fuerza un compile
+      // completo cuando cualquier .wad cambia de contenido. Así el flujo
+      // "edito un PNG → recompilo → veo la textura nueva" funciona.
+      const wadSig = await wadContentSignature(wads);
 
       // Decidir estrategia: full vs onlyents vs skip. Calculamos dos
       // hashes sobre el tilemap deserializado:
@@ -428,7 +528,7 @@ function registerIpc(getWindow) {
       //   - geom igual + ent igual                → skip (devuelve cache).
       //   - geom igual + ent distinto + .bsp ok   → qbsp -onlyents.
       //   - cualquier otro caso                   → full compile.
-      const geomHash = hashGeometry(t, { wadKey, debug, phong });
+      const geomHash = hashGeometry(t, { wadKey, wadSig, debug, phong });
       const entHash = hashEntities(t);
       const cached = compileCache.get(basename);
       const bspPath = path.join(TMP_DIR, `${basename}.bsp`);
@@ -539,13 +639,29 @@ function registerIpc(getWindow) {
       if (!(await fs.stat(exePath).catch(() => null))) {
         return { ok: false, error: `${exeName} not found at ${exePath}` };
       }
-      const args = ['-game', game, '+map', map];
+      // Logging flags for diagnosing crashes/gameplay:
+      //   -condebug  → mirror the in-game console to <cwd>/<game>/qconsole.log
+      //                (captures bprint [DBG] lines and Host_Error text).
+      //   -developer 1 → extra verbosity so warnings/errors are logged too.
+      // We ALSO redirect the process's stdout+stderr to tmp/quake-run.log, so
+      // a fatal Sys_Error (e.g. the "recursively entered" crash) is captured
+      // even when the console log didn't get flushed before the game died.
+      const runLogPath = path.join(TMP_DIR, 'quake-run.log');
+      let outFd = 'ignore';
+      try {
+        outFd = fsSync.openSync(runLogPath, 'w');   // truncate each launch
+      } catch (e) { outFd = 'ignore'; }
+      const args = ['-condebug', '-developer', '1', '-game', game, '+map', map];
       const child = spawn(exePath, args, {
-        cwd, detached: true, stdio: 'ignore', windowsHide: false, shell: false,
+        cwd, detached: true,
+        stdio: (outFd === 'ignore') ? 'ignore' : ['ignore', outFd, outFd],
+        windowsHide: false, shell: false,
       });
       child.on('error', (err) => console.error('[quake:launch]', err));
+      if (outFd !== 'ignore') { try { fsSync.closeSync(outFd); } catch (e) {} }
       child.unref();
-      return { ok: true, pid: child.pid, cmd: `${exePath} ${args.join(' ')}`, qc: qc.log };
+      return { ok: true, pid: child.pid, cmd: `${exePath} ${args.join(' ')}`,
+        qc: qc.log, runLog: runLogPath };
     } catch (err) {
       return { ok: false, error: err.message };
     }

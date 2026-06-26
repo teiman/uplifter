@@ -637,7 +637,8 @@ void() health_touch =
 void() item_health =
 {
 	self.touch = health_touch;
-	precache_sound("items/health1.wav");
+	// (items/health1.wav is precached in worldspawn — item_health can be spawned
+	//  at runtime by drop_vehicle_loot, where precache_* would be a fatal error.)
 	setmodel(self, "progs/box1.mdl");
 	self.aflag = 25;
 	self.skin = 4;
@@ -645,6 +646,15 @@ void() item_health =
 	setsize(self, '-16 -16 -16', '16 16 16');
 	ACStartItem();
 };
+
+// Antes soltaba una caja de munición o salud al destruir un vehículo enemigo.
+// Se ha desactivado a petición del usuario: ya no aparecen cajas al explotar
+// vehículos. Dejamos la función como no-op (firma intacta) para no tocar las
+// llamadas en drone_die / HE_Die / etank_die.
+void(vector org) drop_vehicle_loot =
+{
+};
+
 void() start_flagsoldier;
 
 void() flagcollected_think =

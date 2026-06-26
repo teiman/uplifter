@@ -1,59 +1,59 @@
 # Uplifter — mod
 
-Mod de Quake (motor ironwail) basado en Airquake. Premisa, mundo y skybox: ver
-[../Uplifter.md](../Uplifter.md).
+The Quake mod itself (ironwail engine), built on AirQuake. See the top-level
+[../README.md](../README.md) for the premise, world, and gameplay overview.
 
-## Estructura
+## Structure
 
 ```
 mod/
-  src/        - QuakeC del servidor (progs.dat). progs.src lista el orden.
-  csrc/       - QuakeC del cliente (csprogs.dat). csprogs.src lista el orden.
-  bin/        - fteqcc64.exe (compilador QC).
-  progs/      - modelos .mdl/.spr y skins (vehiculos, proyectiles, armas).
+  src/        - Server-side QuakeC (progs.dat). progs.src lists the file order.
+  csrc/       - Client-side QuakeC (csprogs.dat). csprogs.src lists the order.
+  bin/        - fteqcc64.exe (QuakeC compiler).
+  progs/      - .mdl/.spr models and skins (vehicles, projectiles, weapons).
   gfx/        - HUD, skyboxes (gfx/env), conback, etc.
-  sound/      - sonidos del mod.
-  *.CFG *.RC *.TXT - configs del mod heredados de airquake_dv.
-  build.bat   - compila / despliega / lanza (subcomandos).
+  sound/      - mod sounds.
+  *.CFG *.RC *.TXT - mod configs inherited from airquake_dv.
+  build.bat   - compile / deploy / run (subcommands).
 ```
 
-El codigo QC viene de `D:\quake\airquake_dev\src` y `D:\quake\airquake_dev\csrc`
-(decompilado del PROGS.DAT original de Airquake). Los assets de `progs/`, `gfx/`,
-`sound/` y los configs `.CFG/.RC/.TXT` vienen de la copia instalada en
-`D:\quake\uplifter`.
+The QC code originates from `D:\quake\airquake_dev\src` and
+`D:\quake\airquake_dev\csrc` (decompiled from AirQuake's original PROGS.DAT).
+The `progs/`, `gfx/`, `sound/` assets and the `.CFG/.RC/.TXT` configs come from
+the installed copy at `D:\quake\uplifter`.
 
 ## build.bat
 
-Todo se hace con `build.bat <comando> [map]`. Sin argumentos hace `compile`.
+Everything runs through `build.bat <command> [map]`. With no arguments it runs `compile`.
 
-| Comando | Qué hace |
-|---------|----------|
-| `build.bat compile` | Compila `src/*.qc` → `progs.dat` y `csrc/*.qc` → `csprogs.dat` en `mod/`. |
-| `build.bat deploy` | Copia `progs.dat` y `csprogs.dat` al install `D:\quake\uplifter`. |
-| `build.bat run [map]` | Lanza `ironwail.exe -game uplifter +map <map>`. Map por defecto: `uplifter`. |
-| `build.bat all [map]` | `compile` + `deploy` + `run` en cadena. |
+| Command | What it does |
+|---------|--------------|
+| `build.bat compile` | Compiles `src/*.qc` → `progs.dat` and `csrc/*.qc` → `csprogs.dat` in `mod/`. |
+| `build.bat deploy` | Copies `progs.dat` and `csprogs.dat` to the install at `D:\quake\uplifter`. |
+| `build.bat run [map]` | Launches `ironwail.exe -game uplifter +map <map>`. Default map: `uplifter`. |
+| `build.bat all [map]` | `compile` + `deploy` + `run` chained. |
 
-## Sincronización con D:\quake\uplifter
+## Syncing with D:\quake\uplifter
 
-Todo el flujo va de **este repo → install**. Nunca al revés.
+The flow always goes **this repo → install**. Never the other way around.
 
-| Qué cambia | Dónde se edita | Cómo llega al install |
-|------------|-----------------|---------------------------|
-| Código QC (`src/`, `csrc/`) | `mod/` | `build.bat compile` + `build.bat deploy` |
-| Mapas (`.bsp`) | ModEditor | El editor escribe directamente en `D:\quake\uplifter\maps\` |
-| Modelos / sonidos / texturas | `mod/` | A mano: copiar a `D:\quake\uplifter\{progs,sound,gfx}` |
-| `ironwail.cfg`, `config.cfg`, `autosave/`, `screenshots/` | Los escribe el juego | Se quedan en el install, no nos importan |
+| What changes | Where it's edited | How it reaches the install |
+|--------------|-------------------|----------------------------|
+| QC code (`src/`, `csrc/`) | `mod/` | `build.bat compile` + `build.bat deploy` |
+| Maps (`.bsp`) | ModEditor | The editor writes directly into `D:\quake\uplifter\maps\` |
+| Models / sounds / textures | `mod/` | By hand: copy into `D:\quake\uplifter\{progs,sound,gfx}` |
+| `ironwail.cfg`, `config.cfg`, `autosave/`, `screenshots/` | Written by the game | Stay in the install, we don't track them |
 
-El `deploy` NO arrastra `progs/`, `gfx/`, `sound/` enteros para mantener el ciclo
-rápido. Si añades un asset nuevo, cópialo a mano la primera vez.
+`deploy` does NOT drag the whole `progs/`, `gfx/`, `sound/` trees, to keep the
+cycle fast. When you add a new asset, copy it over by hand the first time.
 
-## Que NO esta versionado
+## What is NOT versioned
 
-- `PAK0.PAK` y `PAK1.PAK` del install (heredados de airquake_dv, no del mod).
-- `progs.dat` y `csprogs.dat` (artefactos del build, regenerables).
-- `maps/` (los `.bsp` los escribe el ModEditor en el install, no aqui).
-- Skyboxes heredados de airquake en `gfx/env/*` excepto los `uplifter_*`
-  (~119 MB de TGA que no usamos). Ver [../.gitignore](../.gitignore).
-- `bin/fteqcc64.exe` (mantener local, no commit).
-- `autosave/`, `screenshots/`, `config.cfg`, `ironwail.cfg` del install
-  (estado de runtime).
+- `PAK0.PAK` and `PAK1.PAK` from the install (inherited from airquake_dv, not the mod).
+- `progs.dat` and `csprogs.dat` (build artifacts, regenerable).
+- `maps/` (the `.bsp` files are written by the ModEditor into the install, not here).
+- AirQuake's inherited skyboxes under `gfx/env/*` except the `uplifter_*` ones
+  (~119 MB of TGA we don't use). See [../.gitignore](../.gitignore).
+- `bin/fteqcc64.exe` (kept local, not committed).
+- `autosave/`, `screenshots/`, `config.cfg`, `ironwail.cfg` from the install
+  (runtime state).

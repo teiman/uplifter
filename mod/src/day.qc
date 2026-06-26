@@ -35,12 +35,38 @@ float g_wave_quota;
 float g_wave_delivered;
 // Time of last day change; used by newscast / UI.
 float g_day_changed_at;
+// Throttle for the deadlock watchdog in Day_Tick (next time it may check).
+float g_deadlock_check_next;
+// Pressure-helo waves: a fresh flight is sent every PRESS_WAVE_PERIOD seconds.
+// g_pressure_next is the time of the next send (0 = not armed yet).
+float PRESS_WAVE_PERIOD = 12;
+float g_pressure_next;
+// Swarm drones: one drops in every SWARM_SPAWN_PERIOD seconds.
+float SWARM_SPAWN_PERIOD = 8;
+float g_swarm_next;
+// Forward decl (defined in eswarm.qc, compiled later): spawn one swarm drone.
+void() Swarm_SpawnOne;
+// Counterforces: a wave of Davenport defense cars every COUNTER_WAVE_PERIOD s.
+float COUNTER_WAVE_PERIOD = 15;
+float g_counter_next;
+// Forward decl (defined in counterforces.qc, compiled later).
+void() Counterforces_SpawnWave;
+// Forces-attack: a wave of ENEMY tanks every FATK_WAVE_PERIOD seconds.
+float FATK_WAVE_PERIOD = 15;
+float g_fatk_next;
+// Forward decl (defined in counterforces.qc, compiled later).
+void() ForcesAttack_SpawnWave;
 
 // Forward decl (defined in upgrades.qc).
 void(float day) Upgrades_OfferDay;
 
 // Forward decl (defined in objectives.qc).
 void() Objectives_RotateDay;
+// Forward decl (defined in objectives.qc): re-arm pickups so they spawn
+// replacement civilians after a passenger loss (anti-deadlock).
+void() Objectives_Rearm;
+// Forward decl (defined in objectives.qc): launch the day's raider helos.
+void() Pressure_SpawnWave;
 // The currently-active pickup objective (defined in objectives.qc, which is
 // compiled after this file). Day_WaveCleared reads it to decide when the
 // active objective has produced its whole daily quota.
@@ -93,6 +119,30 @@ void() Day_OnCivilianLost =
 	if ((g_wave_left < 0)) { g_wave_left = 0; }
 	g_wave_spawned = (g_wave_spawned - 1);
 	if ((g_wave_spawned < 0)) { g_wave_spawned = 0; }
+	// Re-arm the pickups so SOME pickup actually produces the replacement.
+	// civilian_die already rolls back the dead civ's OWN pickup counter, but if
+	// that pickup had already shown its cap / sent the player home (or the
+	// replacement belongs on a different pickup), nothing would spawn and the
+	// day deadlocks ("no mission, no civilians at the pickup"). Rearm clears
+	// those parked flags across all pickups. It's a no-op when the day is
+	// already fully covered (g_wave_spawned >= g_wave_quota).
+	Objectives_Rearm();
+};
+
+// Called when the heli CRASHES carrying `n` passengers: they're lost. They had
+// been picked up (so they already left the field, g_wave_left was decremented
+// at boarding) but never delivered. Un-count them from g_wave_spawned so the
+// pickups will create replacements — the player must go fetch more.
+void(float n) Day_OnPassengersLost =
+{
+	g_wave_spawned = (g_wave_spawned - n);
+	if ((g_wave_spawned < 0)) { g_wave_spawned = 0; }
+	// Re-arm the pickups so they create the replacement civilians the player
+	// must now go fetch. Without this, a pickup that had already shown its cap
+	// or sent the player home stays parked and the day becomes uncompletable
+	// (the "all my pax died on a crash and there's no one left to rescue"
+	// deadlock).
+	Objectives_Rearm();
 };
 
 // Called by ship_check when the heli unloads `n` passengers at the ship.
@@ -190,42 +240,30 @@ float() Day_PickupConcurrent =
 // que publicamos en .hud_intro → STAT_HUD_INTRO. Aquí solo encendemos el
 // código durante NEWS_DAY_DUR y luego lo apagamos.
 // ---------------------------------------------------------------------
-float NEWS_DAY_DUR = 11;  // segundos que se ve el titular del día (cubre el VO)
+float NEWS_DAY_DUR = 3.5;  // segundos de cortinilla de briefing (sin VO ya,
+                          // antes 11s para cubrir el voiceover obsoleto)
 float g_news_code;        // código de día actualmente en pantalla (0 = nada)
 float g_news_until;       // time en el que se apaga el newscast (0 = inactivo)
 
-// Precacheo de las voces del newscast (una por día, 1..5). Llamado desde
-// worldspawn (los precache_* deben hacerse en fase de spawn, no en runtime).
+// (Antes precacheaba las voces del newscast por día. Esos voiceovers de
+// cambio de día quedaron obsoletos — el briefing es ahora una cortinilla
+// silenciosa con "Day N" + cuota. Se deja como stub: lo llama worldspawn.)
 void() News_Precache =
 {
-	precache_sound("speech/news/day1.wav");
-	precache_sound("speech/news/day2.wav");
-	precache_sound("speech/news/day3.wav");
-	precache_sound("speech/news/day4.wav");
-	precache_sound("speech/news/day5.wav");
 };
 
-// Enciende el newscast del día `code` durante `dur` segundos para todos
-// los jugadores conectados. Además reproduce la voz (TTS) del día.
+// Muestra el briefing del día `code` durante `dur` segundos para todos los
+// jugadores. El briefing es una cortinilla (CSQC) con "Day N" y la cuota; ya
+// NO reproduce voiceover (los TTS de cambio de día quedaron obsoletos).
 void(float code, float dur) News_Show =
 {
 	local entity p;
-	local string vo;
 	g_news_code = code;
 	g_news_until = (time + dur);
-	// Ruta de la voz del día (literal por código; evita strcat, no
-	// disponible en SSQC).
-	vo = "speech/news/day1.wav";
-	if (code == 2) { vo = "speech/news/day2.wav"; }
-	else if (code == 3) { vo = "speech/news/day3.wav"; }
-	else if (code == 4) { vo = "speech/news/day4.wav"; }
-	else if (code == 5) { vo = "speech/news/day5.wav"; }
 	p = find(world, classname, "player");
 	while (p)
 	{
 		p.hud_intro = code;
-		// Voz del canal de noticias, sin atenuación por distancia (locutora).
-		sound(p, CHAN_VOICE, vo, 1, ATTN_NORM);
 		p = find(p, classname, "player");
 	}
 };
@@ -327,7 +365,47 @@ void() Day_Tick =
 		{
 			News_Show(1, NEWS_DAY_DUR);
 			g_intro_armed = 0;
+			// Arm the periodic enemy waves: first ones a few seconds after the
+			// player is in, then on their own cadences.
+			g_pressure_next = (time + 4);
+			g_swarm_next = (time + 6);
+			g_counter_next = (time + 8);
+			g_fatk_next = (time + 10);
 		}
+	}
+
+	// Periodic raider waves: send a fresh flight every PRESS_WAVE_PERIOD
+	// seconds (independent of the day). Only while a player exists and we're
+	// not on the representative-only final day.
+	if ((g_pressure_next > 0) && (time >= g_pressure_next) && (g_day < DAY_MAX))
+	{
+		g_pressure_next = (time + PRESS_WAVE_PERIOD);
+		p = find(world, classname, "player");
+		if ((p != world)) { Pressure_SpawnWave(); }
+	}
+
+	// Periodic swarm drones: one every SWARM_SPAWN_PERIOD seconds.
+	if ((g_swarm_next > 0) && (time >= g_swarm_next) && (g_day < DAY_MAX))
+	{
+		g_swarm_next = (time + SWARM_SPAWN_PERIOD);
+		p = find(world, classname, "player");
+		if ((p != world)) { Swarm_SpawnOne(); }
+	}
+
+	// Counterforces: a Davenport defense wave every COUNTER_WAVE_PERIOD seconds.
+	if ((g_counter_next > 0) && (time >= g_counter_next) && (g_day < DAY_MAX))
+	{
+		g_counter_next = (time + COUNTER_WAVE_PERIOD);
+		p = find(world, classname, "player");
+		if ((p != world)) { Counterforces_SpawnWave(); }
+	}
+
+	// Forces-attack: an enemy armour wave every FATK_WAVE_PERIOD seconds.
+	if ((g_fatk_next > 0) && (time >= g_fatk_next) && (g_day < DAY_MAX))
+	{
+		g_fatk_next = (time + FATK_WAVE_PERIOD);
+		p = find(world, classname, "player");
+		if ((p != world)) { ForcesAttack_SpawnWave(); }
 	}
 
 	if ((g_day >= DAY_MAX))
@@ -335,6 +413,52 @@ void() Day_Tick =
 		// Day 5 ends only when the representative reaches the carrier.
 		return;
 	}
+
+	// Deadlock watchdog — trusts the WORLD, not the bookkeeping counters.
+	// Every counter (g_wave_left / g_wave_spawned) has drifted in some run and
+	// re-stuck the day, so here we ignore them and measure reality directly:
+	//   - quota unmet:        g_wave_delivered < g_wave_quota   (delivered only
+	//                         ever goes up on a real delivery, so it's trusted)
+	//   - no civilians exist: zero entities of classname "civilian" in the world
+	//   - no pax carried:     sum of every player's .pax is 0
+	// If all three hold, the day literally cannot progress — there's nobody to
+	// rescue, carry, or deliver — so we force a top-up: pull g_wave_spawned back
+	// to g_wave_delivered (so want = quota - spawned > 0) and re-arm the pickups.
+	// Throttled to once a second.
+	if ((time > (g_day_changed_at + 1)) && (time >= g_deadlock_check_next))
+	{
+		g_deadlock_check_next = (time + 1);
+		if ((g_wave_delivered < g_wave_quota))
+		{
+			local float paxsum;
+			local float civcount;
+			local entity e;
+			paxsum = 0;
+			p = find(world, classname, "player");
+			while (p)
+			{
+				paxsum = (paxsum + p.pax);
+				p = find(p, classname, "player");
+			}
+			civcount = 0;
+			e = find(world, classname, "civilian");
+			while (e)
+			{
+				civcount = (civcount + 1);
+				e = find(e, classname, "civilian");
+			}
+			if ((paxsum <= 0) && (civcount <= 0))
+			{
+				// Nobody to rescue/carry/deliver, yet quota unmet → real
+				// deadlock regardless of what the counters say. Resync them to
+				// reality and re-arm the pickups so they produce the shortfall.
+				g_wave_spawned = g_wave_delivered;
+				g_wave_left = 0;
+				Objectives_Rearm();
+			}
+		}
+	}
+
 	if (Day_WaveCleared())
 	{
 		// Tiny debounce so the wave-spawn frame doesn't immediately
